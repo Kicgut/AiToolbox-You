@@ -82,7 +82,7 @@ class Collector:
             seen_ids.add(cid)
             cur_up, cur_down = conn["upload"], conn["download"]
             metadata = conn.get("metadata", {})
-            process_name = metadata.get("process") or "??"
+            process_name = metadata.get("process") or "未知"
             host = metadata.get("host") or metadata.get("destinationIP")
             network = metadata.get("network", "tcp")
             direction = self.classify_direction(conn.get("chains", []))
