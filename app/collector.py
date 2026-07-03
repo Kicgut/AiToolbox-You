@@ -1,12 +1,22 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import itertools
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 from app import repository
+
+
+def _parse_start_ts(raw, now: float) -> int:
+    if not raw:
+        return int(now)
+    try:
+        return int(datetime.fromisoformat(str(raw)).timestamp())
+    except (ValueError, TypeError):
+        return int(now)
 
 
 @dataclass
@@ -119,7 +129,7 @@ class Collector:
                 speed_down=speed_down,
                 total_up=cur_up,
                 total_down=cur_down,
-                start_ts=int(metadata.get("start", now)),
+                start_ts=_parse_start_ts(conn.get("start"), now),
                 _last_ts=now,
             )
         closed = set(self.live_map) - seen_ids
