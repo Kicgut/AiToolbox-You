@@ -14,10 +14,9 @@ class ClashClient:
     async def connect_connections_ws(self) -> AsyncIterator[Dict]:
         url = f"ws://{self.base_url}/connections"
         headers = {}
-        params = ""
         if self.secret:
             headers["Authorization"] = f"Bearer {self.secret}"
-            params = f"?token={self.secret}"
-        async with websockets.connect(url + params, extra_headers=headers) as ws:
+            url += f"?token={self.secret}"
+        async with websockets.connect(url, additional_headers=headers) as ws:
             async for raw in ws:
                 yield json.loads(raw)
