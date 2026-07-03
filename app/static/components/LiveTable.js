@@ -1,4 +1,4 @@
-Ôªøimport { ref, computed } from '../../vendor/vue.esm-browser.prod.js';
+import { ref, computed } from '../vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatSpeed, formatDuration, formatTimestamp } from '../utils/format.js';
 import { label } from '../utils/labels.js';
 
@@ -52,9 +52,9 @@ export default {
             if (field === 'total_up' || field === 'total_down') return formatBytes(value);
             if (field === 'start_ts') {
                 const now = Math.floor(Date.now() / 1000);
-                return formatDuration(now - value) + ' Ââç';
+                return formatDuration(now - value) + ' «∞';
             }
-            if (field === 'direction') return value === 'proxy' ? '‰ª£ÁêÜ' : 'Áõ¥Ëøû';
+            if (field === 'direction') return value === 'proxy' ? '¥˙¿Ì' : '÷±¡¨';
             return value;
         }
 
@@ -67,7 +67,7 @@ export default {
                     <tr>
                         <th v-for="h in headers" :key="h" @click="toggleSort(h)" :class="{ active: sortKey === h }">
                             {{ label(h) }}
-                            <span v-if="sortKey === h" class="sort-arrow">{{ sortAsc ? '‚ñ≤' : '‚ñº' }}</span>
+                            <span v-if="sortKey === h" class="sort-arrow">{{ sortAsc ? '°¯' : '®ã' }}</span>
                         </th>
                     </tr>
                 </thead>
@@ -79,7 +79,7 @@ export default {
                         <td v-for="h in headers" :key="h">{{ formatCell(h, c[h]) }}</td>
                     </tr>
                     <tr v-if="filteredData.length === 0 && filteredDisconnected.length === 0">
-                        <td :colspan="headers.length" class="empty-state">ÊöÇÊó†Ê¥ªË∑ÉËøûÊé•</td>
+                        <td :colspan="headers.length" class="empty-state">‘›ŒﬁªÓ‘æ¡¨Ω”</td>
                     </tr>
                 </tbody>
             </table>

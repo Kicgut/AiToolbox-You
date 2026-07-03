@@ -1,4 +1,4 @@
-ï»¿import { ref, onMounted, onUnmounted } from '../vendor/vue.esm-browser.prod.js';
+import { ref, onMounted, onUnmounted } from './vendor/vue.esm-browser.prod.js';
 import StatusBar from './components/StatusBar.js';
 import TrafficChart from './components/TrafficChart.js';
 import TopTable from './components/TopTable.js';
@@ -85,9 +85,9 @@ export default {
     template: `
         <div class="app-container">
             <header class="app-header">
-                <h1>ä»£ç†æµé‡ç›‘æ§</h1>
+                <h1>´úÀíÁ÷Á¿¼à¿Ø</h1>
                 <button class="theme-toggle" @click="toggleDarkMode">
-                    {{ darkMode ? 'â˜€ äº®è‰²' : 'ğŸŒ™ æš—è‰²' }}
+                    {{ darkMode ? '? ÁÁÉ«' : '?? °µÉ«' }}
                 </button>
             </header>
 
@@ -99,12 +99,12 @@ export default {
 
             <div class="card">
                 <div class="card-header">
-                    <h3>å®æ—¶è¿æ¥</h3>
+                    <h3>ÊµÊ±Á¬½Ó</h3>
                     <div class="controls">
                         <select v-model="liveDirection">
-                            <option value="">å…¨éƒ¨</option>
-                            <option value="proxy">ä»…ä»£ç†</option>
-                            <option value="direct">ä»…ç›´è¿</option>
+                            <option value="">È«²¿</option>
+                            <option value="proxy">½ö´úÀí</option>
+                            <option value="direct">½öÖ±Á¬</option>
                         </select>
                     </div>
                 </div>

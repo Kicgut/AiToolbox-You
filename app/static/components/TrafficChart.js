@@ -1,4 +1,4 @@
-ï»¿import { ref, onMounted, onUnmounted, nextTick } from '../../vendor/vue.esm-browser.prod.js';
+import { ref, onMounted, onUnmounted, nextTick } from '../vendor/vue.esm-browser.prod.js';
 import { formatBytes } from '../utils/format.js';
 
 export default {
@@ -11,9 +11,9 @@ export default {
         let canvasRef = ref(null);
 
         const granularityOptions = [
-            { value: 'hour', label: 'å°æ—¶' },
-            { value: 'day', label: 'å¤©' },
-            { value: 'week', label: 'å‘¨' }
+            { value: 'hour', label: 'Ğ¡Ê±' },
+            { value: 'day', label: 'Ìì' },
+            { value: 'week', label: 'ÖÜ' }
         ];
 
         async function fetchData() {
@@ -39,10 +39,10 @@ export default {
         function renderChart(buckets) {
             const labels = buckets.map(b => new Date(b.bucket * 1000).toLocaleString('zh-CN', { hour12: false }));
             const datasets = [
-                { label: 'ç›´è¿ä¸Šä¼ ', data: buckets.map(b => b.direct_upload), backgroundColor: 'rgba(52,152,219,0.5)', stack: 'direct' },
-                { label: 'ç›´è¿ä¸‹è½½', data: buckets.map(b => b.direct_download), backgroundColor: 'rgba(52,152,219,0.9)', stack: 'direct' },
-                { label: 'ä»£ç†ä¸Šä¼ ', data: buckets.map(b => b.proxy_upload), backgroundColor: 'rgba(231,76,60,0.5)', stack: 'proxy' },
-                { label: 'ä»£ç†ä¸‹è½½', data: buckets.map(b => b.proxy_download), backgroundColor: 'rgba(231,76,60,0.9)', stack: 'proxy' },
+                { label: 'Ö±Á¬ÉÏ´«', data: buckets.map(b => b.direct_upload), backgroundColor: 'rgba(52,152,219,0.5)', stack: 'direct' },
+                { label: 'Ö±Á¬ÏÂÔØ', data: buckets.map(b => b.direct_download), backgroundColor: 'rgba(52,152,219,0.9)', stack: 'direct' },
+                { label: '´úÀíÉÏ´«', data: buckets.map(b => b.proxy_upload), backgroundColor: 'rgba(231,76,60,0.5)', stack: 'proxy' },
+                { label: '´úÀíÏÂÔØ', data: buckets.map(b => b.proxy_download), backgroundColor: 'rgba(231,76,60,0.9)', stack: 'proxy' },
             ];
 
             if (chartInstance) {
@@ -94,7 +94,7 @@ export default {
     template: `
         <div class="card chart-card">
             <div class="card-header">
-                <h3>æµé‡è¶‹åŠ¿</h3>
+                <h3>Á÷Á¿Ç÷ÊÆ</h3>
                 <div class="tabs">
                     <button v-for="opt in granularityOptions" :key="opt.value"
                         class="tab" :class="{ active: granularity === opt.value }"
@@ -102,8 +102,8 @@ export default {
                 </div>
             </div>
             <div class="chart-wrapper">
-                <div v-if="loading" class="loading-state">åŠ è½½ä¸­â€¦</div>
-                <div v-else-if="noData" class="empty-state">æš‚æ— æ•°æ®</div>
+                <div v-if="loading" class="loading-state">¼ÓÔØÖĞ¡­</div>
+                <div v-else-if="noData" class="empty-state">ÔİÎŞÊı¾İ</div>
                 <canvas v-show="!loading && !noData" id="trafficChart"></canvas>
             </div>
         </div>
