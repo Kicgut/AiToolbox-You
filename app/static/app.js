@@ -78,10 +78,10 @@ function renderChart(buckets) {
     const proxyUp = buckets.map(b => b.proxy_upload);
     const proxyDown = buckets.map(b => b.proxy_download);
     const datasets = [
-        { label: '????', data: directUp, backgroundColor: 'rgba(75,192,192,0.5)' },
-        { label: '????', data: directDown, backgroundColor: 'rgba(75,192,192,0.9)' },
-        { label: '????', data: proxyUp, backgroundColor: 'rgba(255,99,132,0.5)' },
-        { label: '????', data: proxyDown, backgroundColor: 'rgba(255,99,132,0.9)' },
+        { label: '直连上传', data: directUp, backgroundColor: 'rgba(75,192,192,0.5)' },
+        { label: '直连下载', data: directDown, backgroundColor: 'rgba(75,192,192,0.9)' },
+        { label: '代理上传', data: proxyUp, backgroundColor: 'rgba(255,99,132,0.5)' },
+        { label: '代理下载', data: proxyDown, backgroundColor: 'rgba(255,99,132,0.9)' },
     ];
     if (chart) {
         chart.data.labels = labels;
@@ -157,7 +157,7 @@ async function pollStatus() {
         const res = await fetch('/api/status');
         const data = await res.json();
         document.getElementById('status-indicator').className = data.connected ? 'dot connected' : 'dot';
-        document.getElementById('status-text').textContent = data.connected ? `??? (${data.live_count})` : '???';
+        document.getElementById('status-text').textContent = data.connected ? `已连接 (${data.live_count})` : '未连接';
     } catch {}
 }
 

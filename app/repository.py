@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Dict, List, Optional, Tuple
 
 import aiosqlite
@@ -40,7 +41,7 @@ async def upsert_connection_log(
             conn.chain,
             conn.rule,
             conn.start_ts,
-            int(conn.start_ts),
+            int(time.time()),
             getattr(state, 'last_upload', conn.total_up),
             getattr(state, 'last_download', conn.total_down),
         ))
@@ -163,7 +164,7 @@ async def query_distinct_apps(db: aiosqlite.Connection) -> List[str]:
 
 
 async def delete_older_than(db: aiosqlite.Connection, retention_days: int) -> None:
-    cutoff = int(asyncio.get_event_loop().time()) - retention_days * 86400
+    cutoff = int(time.time()) - retention_days * 86400
     await db.execute("DELETE FROM traffic_minute_app WHERE minute_ts < ?", (cutoff,))
     await db.execute("DELETE FROM connection_log WHERE last_seen_ts < ?", (cutoff,))
     await db.commit()

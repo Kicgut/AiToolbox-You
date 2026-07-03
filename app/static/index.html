@@ -8,42 +8,42 @@
 <body>
     <header id="status-bar">
         <span id="status-indicator" class="dot"></span>
-        <span id="status-text">???</span>
+        <span id="status-text">未连接</span>
     </header>
 
     <section id="charts">
         <div class="tabs">
-            <button class="tab active" data-granularity="hour">??</button>
-            <button class="tab" data-granularity="day">?</button>
-            <button class="tab" data-granularity="week">?</button>
+            <button class="tab active" data-granularity="hour">小时</button>
+            <button class="tab" data-granularity="day">天</button>
+            <button class="tab" data-granularity="week">周</button>
         </div>
         <canvas id="trafficChart" height="200"></canvas>
     </section>
 
     <section id="top-section">
-        <h2>Top ??</h2>
+        <h2>Top 排行</h2>
         <div id="top-controls">
             <select id="top-dimension">
-                <option value="app">??</option>
-                <option value="connection">??</option>
+                <option value="app">应用</option>
+                <option value="connection">连接</option>
             </select>
             <select id="top-range">
-                <option value="1h">?1??</option>
-                <option value="today">??</option>
-                <option value="7d">?7?</option>
-                <option value="30d">?30?</option>
+                <option value="1h">近1小时</option>
+                <option value="today">今天</option>
+                <option value="7d">近7天</option>
+                <option value="30d">近30天</option>
             </select>
             <select id="top-direction">
-                <option value="">??</option>
-                <option value="proxy">???</option>
-                <option value="direct">???</option>
+                <option value="">全部</option>
+                <option value="proxy">仅代理</option>
+                <option value="direct">仅直连</option>
             </select>
             <select id="top-sort">
-                <option value="total">??</option>
-                <option value="upload">??</option>
-                <option value="download">??</option>
+                <option value="total">总量</option>
+                <option value="upload">上传</option>
+                <option value="download">下载</option>
             </select>
-            <button id="btn-export-top">?? CSV</button>
+            <button id="btn-export-top">导出 CSV</button>
         </div>
         <table id="top-table">
             <thead></thead>
@@ -52,12 +52,12 @@
     </section>
 
     <section id="live-section">
-        <h2>????</h2>
+        <h2>实时连接</h2>
         <div id="live-controls">
             <select id="live-direction">
-                <option value="">??</option>
-                <option value="proxy">???</option>
-                <option value="direct">???</option>
+                <option value="">全部</option>
+                <option value="proxy">仅代理</option>
+                <option value="direct">仅直连</option>
             </select>
         </div>
         <table id="live-table">

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+import logging
 import yaml
 
 
@@ -39,13 +40,16 @@ class Config:
     collector: CollectorConfig = field(default_factory=CollectorConfig)
 
 
+logger = logging.getLogger(__name__)
+
+
 def load_config(path: str = "config.yaml") -> Config:
     data: dict = {}
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        pass
+        logger.warning("Config file %s not found, using defaults", path)
 
     clash_api = ClashApiConfig(**data.get("clash_api", {}))
     server = ServerConfig(**data.get("server", {}))
