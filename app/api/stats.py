@@ -67,6 +67,10 @@ async def top(
         data = await repository.query_top_apps(request.app.state.db, start, end, direction, sort, limit)
     elif dimension == 'connection':
         data = await repository.query_top_connections(request.app.state.db, start, end, direction, sort, limit)
+    elif dimension == 'chain':
+        data = await repository.query_top_chains(request.app.state.db, start, end, direction, sort, limit)
+    elif dimension == 'host':
+        data = await repository.query_top_hosts(request.app.state.db, start, end, direction, sort, limit)
     else:
         data = []
     return {"data": data}
@@ -99,8 +103,14 @@ async def export(
         start, end = _parse_range(range)
         if dimension == 'app':
             rows = await repository.query_top_apps(request.app.state.db, start, end, direction, sort, limit)
-        else:
+        elif dimension == 'connection':
             rows = await repository.query_top_connections(request.app.state.db, start, end, direction, sort, limit)
+        elif dimension == 'chain':
+            rows = await repository.query_top_chains(request.app.state.db, start, end, direction, sort, limit)
+        elif dimension == 'host':
+            rows = await repository.query_top_hosts(request.app.state.db, start, end, direction, sort, limit)
+        else:
+            rows = []
     buf = io.StringIO()
     writer = csv.writer(buf)
     if rows:
