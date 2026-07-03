@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time
 from typing import Dict, List, Optional, Tuple
@@ -160,6 +160,68 @@ async def query_top_connections(
         rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
+
+
+async def query_top_chains(
+    db: aiosqlite.Connection,
+    start_ts: int,
+    end_ts: int,
+    direction: Optional[str],
+    sort: str,
+    limit: int,
+) -> List[Dict]:
+    order = {
+        'upload': 'SUM(upload_bytes) DESC',
+        'download': 'SUM(download_bytes) DESC',
+        'total': 'SUM(upload_bytes + download_bytes) DESC',
+    }[sort]
+    sql = f"""
+        SELECT chain,
+               SUM(upload_bytes) AS upload_bytes,
+               SUM(download_bytes) AS download_bytes
+        FROM connection_log
+        WHERE last_seen_ts BETWEEN ? AND ?
+    """
+    params: list = [start_ts, end_ts]
+    if direction:
+        sql += " AND direction = ?"
+        params.append(direction)
+    sql += f" GROUP BY chain ORDER BY {order} LIMIT ?;"
+    params.append(limit)
+    async with db.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def query_top_hosts(
+    db: aiosqlite.Connection,
+    start_ts: int,
+    end_ts: int,
+    direction: Optional[str],
+    sort: str,
+    limit: int,
+) -> List[Dict]:
+    order = {
+        'upload': 'SUM(upload_bytes) DESC',
+        'download': 'SUM(download_bytes) DESC',
+        'total': 'SUM(upload_bytes + download_bytes) DESC',
+    }[sort]
+    sql = f"""
+        SELECT host,
+               SUM(upload_bytes) AS upload_bytes,
+               SUM(download_bytes) AS download_bytes
+        FROM connection_log
+        WHERE last_seen_ts BETWEEN ? AND ?
+    """
+    params: list = [start_ts, end_ts]
+    if direction:
+        sql += " AND direction = ?"
+        params.append(direction)
+    sql += f" GROUP BY host ORDER BY {order} LIMIT ?;"
+    params.append(limit)
+    async with db.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 async def query_distinct_apps(db: aiosqlite.Connection) -> List[str]:
     async with db.execute("SELECT DISTINCT process_name FROM traffic_minute_app ORDER BY process_name") as cur:

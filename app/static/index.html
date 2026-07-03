@@ -1,72 +1,16 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
     <meta charset="UTF-8" />
-    <title>Proxy Traffic Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>代理流量监控</title>
     <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-    <header id="status-bar">
-        <span id="status-indicator" class="dot"></span>
-        <span id="status-text">未连接</span>
-    </header>
-
-    <section id="charts">
-        <div class="tabs">
-            <button class="tab active" data-granularity="hour">小时</button>
-            <button class="tab" data-granularity="day">天</button>
-            <button class="tab" data-granularity="week">周</button>
-        </div>
-        <canvas id="trafficChart" height="200"></canvas>
-    </section>
-
-    <section id="top-section">
-        <h2>Top 排行</h2>
-        <div id="top-controls">
-            <select id="top-dimension">
-                <option value="app">应用</option>
-                <option value="connection">连接</option>
-            </select>
-            <select id="top-range">
-                <option value="1h">近1小时</option>
-                <option value="today">今天</option>
-                <option value="7d">近7天</option>
-                <option value="30d">近30天</option>
-            </select>
-            <select id="top-direction">
-                <option value="">全部</option>
-                <option value="proxy">仅代理</option>
-                <option value="direct">仅直连</option>
-            </select>
-            <select id="top-sort">
-                <option value="total">总量</option>
-                <option value="upload">上传</option>
-                <option value="download">下载</option>
-            </select>
-            <button id="btn-export-top">导出 CSV</button>
-        </div>
-        <table id="top-table">
-            <thead></thead>
-            <tbody></tbody>
-        </table>
-    </section>
-
-    <section id="live-section">
-        <h2>实时连接</h2>
-        <div id="live-controls">
-            <select id="live-direction">
-                <option value="">全部</option>
-                <option value="proxy">仅代理</option>
-                <option value="direct">仅直连</option>
-            </select>
-        </div>
-        <table id="live-table">
-            <thead></thead>
-            <tbody></tbody>
-        </table>
-    </section>
-
+    <div id="app">
+        <div class="loading-screen">加载中…</div>
+    </div>
     <script src="/static/vendor/chart.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script type="module" src="/static/main.js"></script>
 </body>
 </html>
