@@ -1,0 +1,67 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f5f5f5;
+}
+
+header#status-bar {
+    background: #333;
+    color: #fff;
+    padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dot {
+    height: 10px;
+    width: 10px;
+    border-radius: 50%;
+    background: red;
+    display: inline-block;
+}
+
+.dot.connected {
+    background: limegreen;
+}
+
+section {
+    padding: 1rem;
+    margin: 1rem;
+    background: #fff;
+    border-radius: 4px;
+}
+
+.tabs {
+    margin-bottom: 0.5rem;
+}
+
+.tab {
+    margin-right: 0.25rem;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+    font-size: 0.9rem;
+}
+
+th {
+    cursor: pointer;
+    background: #f0f0f0;
+}
+
+tr.proxy {
+    background: #fff3cd;
+}
+
+tr.direct {
+    background: #d4edda;
+}

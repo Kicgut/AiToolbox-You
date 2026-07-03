@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <title>Proxy Traffic Monitor</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <header id="status-bar">
+        <span id="status-indicator" class="dot"></span>
+        <span id="status-text">???</span>
+    </header>
+
+    <section id="charts">
+        <div class="tabs">
+            <button class="tab active" data-granularity="hour">??</button>
+            <button class="tab" data-granularity="day">?</button>
+            <button class="tab" data-granularity="week">?</button>
+        </div>
+        <canvas id="trafficChart" height="200"></canvas>
+    </section>
+
+    <section id="top-section">
+        <h2>Top ??</h2>
+        <div id="top-controls">
+            <select id="top-dimension">
+                <option value="app">??</option>
+                <option value="connection">??</option>
+            </select>
+            <select id="top-range">
+                <option value="1h">?1??</option>
+                <option value="today">??</option>
+                <option value="7d">?7?</option>
+                <option value="30d">?30?</option>
+            </select>
+            <select id="top-direction">
+                <option value="">??</option>
+                <option value="proxy">???</option>
+                <option value="direct">???</option>
+            </select>
+            <select id="top-sort">
+                <option value="total">??</option>
+                <option value="upload">??</option>
+                <option value="download">??</option>
+            </select>
+            <button id="btn-export-top">?? CSV</button>
+        </div>
+        <table id="top-table">
+            <thead></thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    <section id="live-section">
+        <h2>????</h2>
+        <div id="live-controls">
+            <select id="live-direction">
+                <option value="">??</option>
+                <option value="proxy">???</option>
+                <option value="direct">???</option>
+            </select>
+        </div>
+        <table id="live-table">
+            <thead></thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    <script src="/static/vendor/chart.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
