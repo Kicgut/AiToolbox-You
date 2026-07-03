@@ -1,4 +1,4 @@
-import { ref, onMounted } from '../vendor/vue.esm-browser.prod.js';
+ï»¿import { ref, onMounted } from '../vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatTimestamp } from '../utils/format.js';
 import { label } from '../utils/labels.js';
 
@@ -14,29 +14,29 @@ export default {
         const loading = ref(false);
 
         const dimensionOptions = [
-            { value: 'app', label: 'Ó¦ÓÃ' },
-            { value: 'connection', label: 'Á¬½Ó' },
-            { value: 'chain', label: '½Úµã' },
-            { value: 'host', label: 'Ä¿±êÖ÷»ú' }
+            { value: 'app', label: 'åº”ç”¨' },
+            { value: 'connection', label: 'è¿æ¥' },
+            { value: 'chain', label: 'èŠ‚ç‚¹' },
+            { value: 'host', label: 'ç›®æ ‡ä¸»æœº' }
         ];
 
         const rangeOptions = [
-            { value: '1h', label: '½ü1Ğ¡Ê±' },
-            { value: 'today', label: '½ñÌì' },
-            { value: '7d', label: '½ü7Ìì' },
-            { value: '30d', label: '½ü30Ìì' }
+            { value: '1h', label: 'è¿‘1å°æ—¶' },
+            { value: 'today', label: 'ä»Šå¤©' },
+            { value: '7d', label: 'è¿‘7å¤©' },
+            { value: '30d', label: 'è¿‘30å¤©' }
         ];
 
         const directionOptions = [
-            { value: '', label: 'È«²¿' },
-            { value: 'proxy', label: '½ö´úÀí' },
-            { value: 'direct', label: '½öÖ±Á¬' }
+            { value: '', label: 'å…¨éƒ¨' },
+            { value: 'proxy', label: 'ä»…ä»£ç†' },
+            { value: 'direct', label: 'ä»…ç›´è¿' }
         ];
 
         const sortOptions = [
-            { value: 'total', label: '×ÜÁ¿' },
-            { value: 'upload', label: 'ÉÏ´«' },
-            { value: 'download', label: 'ÏÂÔØ' }
+            { value: 'total', label: 'æ€»é‡' },
+            { value: 'upload', label: 'ä¸Šä¼ ' },
+            { value: 'download', label: 'ä¸‹è½½' }
         ];
 
         async function fetchData() {
@@ -62,7 +62,7 @@ export default {
         function formatCell(field, value) {
             if (field === 'upload_bytes' || field === 'download_bytes') return formatBytes(value);
             if (field === 'start_ts' || field === 'last_seen_ts') return formatTimestamp(value);
-            if (field === 'direction') return value === 'proxy' ? '´úÀí' : 'Ö±Á¬';
+            if (field === 'direction') return value === 'proxy' ? 'ä»£ç†' : 'ç›´è¿';
             return value;
         }
 
@@ -121,7 +121,7 @@ export default {
     template: `
         <div class="card">
             <div class="card-header">
-                <h3>Top ÅÅĞĞ</h3>
+                <h3>Top æ’è¡Œ</h3>
                 <div class="controls">
                     <select v-model="dimension" @change="fetchData">
                         <option v-for="opt in dimensionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
@@ -135,12 +135,12 @@ export default {
                     <select v-model="sort" @change="fetchData">
                         <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                     </select>
-                    <button class="btn" @click="exportCSV">µ¼³ö CSV</button>
+                    <button class="btn" @click="exportCSV">å¯¼å‡º CSV</button>
                 </div>
             </div>
             <div class="table-container">
-                <div v-if="loading" class="loading-state">¼ÓÔØÖĞ¡­</div>
-                <div v-else-if="data.length === 0" class="empty-state">ÔİÎŞÊı¾İ</div>
+                <div v-if="loading" class="loading-state">åŠ è½½ä¸­â€¦</div>
+                <div v-else-if="data.length === 0" class="empty-state">æš‚æ— æ•°æ®</div>
                 <table v-else class="data-table">
                     <thead>
                         <tr>

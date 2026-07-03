@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from './vendor/vue.esm-browser.prod.js';
+ï»¿import { ref, onMounted, onUnmounted } from './vendor/vue.esm-browser.prod.js';
 import StatusBar from './components/StatusBar.js';
 import TrafficChart from './components/TrafficChart.js';
 import TopTable from './components/TopTable.js';
@@ -11,11 +11,12 @@ export default {
         const liveData = ref([]);
         const liveDirection = ref('');
         const darkMode = ref(false);
-        const disconnectedBuffer = ref([]);
+        const disconnectedBuffer = ref([]); // recently disconnected connections
         let ws = null;
         let statusBarRef = ref(null);
         let prevConnIds = new Set();
 
+        // Dark mode: read system preference once, then localStorage
         const savedTheme = localStorage.getItem('theme');
         if (savedTheme) {
             darkMode.value = savedTheme === 'dark';
@@ -37,6 +38,7 @@ export default {
                     const data = JSON.parse(e.data);
                     const newIds = new Set(data.map(c => c.id));
 
+                    // Find connections that disappeared
                     for (const id of prevConnIds) {
                         if (!newIds.has(id)) {
                             const existing = liveData.value.find(c => c.id === id);
@@ -50,6 +52,7 @@ export default {
                     }
                     prevConnIds = newIds;
 
+                    // Clean up old disconnected entries (>10s)
                     const now = Date.now();
                     disconnectedBuffer.value = disconnectedBuffer.value.filter(
                         c => now - c._disconnectedAt < 10000
@@ -85,9 +88,9 @@ export default {
     template: `
         <div class="app-container">
             <header class="app-header">
-                <h1>´úÀíÁ÷Á¿¼à¿Ø</h1>
+                <h1>ä»£ç†æµé‡ç›‘æŽ§</h1>
                 <button class="theme-toggle" @click="toggleDarkMode">
-                    {{ darkMode ? '? ÁÁÉ«' : '?? °µÉ«' }}
+                    {{ darkMode ? 'â˜€ äº®è‰²' : 'ðŸŒ™ æš—è‰²' }}
                 </button>
             </header>
 
@@ -99,12 +102,12 @@ export default {
 
             <div class="card">
                 <div class="card-header">
-                    <h3>ÊµÊ±Á¬½Ó</h3>
+                    <h3>å®žæ—¶è¿žæŽ¥</h3>
                     <div class="controls">
                         <select v-model="liveDirection">
-                            <option value="">È«²¿</option>
-                            <option value="proxy">½ö´úÀí</option>
-                            <option value="direct">½öÖ±Á¬</option>
+                            <option value="">å…¨éƒ¨</option>
+                            <option value="proxy">ä»…ä»£ç†</option>
+                            <option value="direct">ä»…ç›´è¿ž</option>
                         </select>
                     </div>
                 </div>

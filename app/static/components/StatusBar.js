@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from '../vendor/vue.esm-browser.prod.js';
+ï»¿import { ref, onMounted, onUnmounted, computed, watch, nextTick } from '../vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatSpeed } from '../utils/format.js';
 
 export default {
@@ -31,7 +31,7 @@ export default {
             for (const c of conns) {
                 up += c.speed_up || 0;
                 down += c.speed_down || 0;
-                if (c.process_name === 'Î´Öª') unknownCount++;
+                if (c.process_name === 'æœªçŸ¥') unknownCount++;
             }
             totalUp.value = up;
             totalDown.value = down;
@@ -99,17 +99,17 @@ export default {
         <div class="status-bar">
             <div class="status-bar-main">
                 <span class="status-dot" :class="{ connected }"></span>
-                <span class="status-text">{{ connected ? 'ÒÑÁ¬½Ó' : 'Î´Á¬½Ó' }}</span>
-                <span class="status-count" v-if="connected">»îÔ¾Á¬½Ó: {{ liveCount }}</span>
+                <span class="status-text">{{ connected ? 'å·²è¿æ¥' : 'æœªè¿æ¥' }}</span>
+                <span class="status-count" v-if="connected">æ´»è·ƒè¿æ¥: {{ liveCount }}</span>
                 <div class="speed-block" v-if="connected">
-                    <span class="status-speed">µ±Ç°×ÜËÙÂÊ: {{ totalSpeedStr }}</span>
+                    <span class="status-speed">å½“å‰æ€»é€Ÿç‡: {{ totalSpeedStr }}</span>
                     <div class="sparkline-wrapper">
                         <canvas id="speedSparkline"></canvas>
                     </div>
                 </div>
             </div>
             <div class="process-warning" v-if="processWarning">
-                ? Î´¼ì²âµ½Ó¦ÓÃÃû£¬ÇëÔÚ Clash ÅäÖÃÖĞ½« <code>find-process-mode</code> ÉèÎª <code>always</code> ºóÖØÆô¿Í»§¶Ë
+                âš  æœªæ£€æµ‹åˆ°åº”ç”¨åï¼Œè¯·åœ¨ Clash é…ç½®ä¸­å°† <code>find-process-mode</code> è®¾ä¸º <code>always</code> åé‡å¯å®¢æˆ·ç«¯
             </div>
         </div>
     `
