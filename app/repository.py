@@ -4,23 +4,25 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import aiosqlite
+from app.db import write_lock
 
 
 async def upsert_minute_stats(db: aiosqlite.Connection, agg: Dict[Tuple[int, str, str], List[int]]) -> None:
     if not agg:
         return
-    rows = [(minute_ts, process_name, direction, up, down) for (minute_ts, process_name, direction), (up, down) in agg.items()]
-    await db.executemany(
-        """        INSERT INTO traffic_minute_app (minute_ts, process_name, direction, upload_bytes, download_bytes)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(minute_ts, process_name, direction)
-        DO UPDATE SET
-            upload_bytes = upload_bytes + excluded.upload_bytes,
-            download_bytes = download_bytes + excluded.download_bytes;
-        """,
-        rows,
-    )
-    await db.commit()
+    async with write_lock:
+        rows = [(minute_ts, process_name, direction, up, down) for (minute_ts, process_name, direction), (up, down) in agg.items()]
+        await db.executemany(
+            """
+            INSERT INTO traffic_minute_app (minute_ts, process_name, direction, upload_bytes, download_bytes)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(minute_ts, process_name, direction)
+            DO UPDATE SET upload_bytes = upload_bytes + excluded.upload_bytes,
+                          download_bytes = download_bytes + excluded.download_bytes;
+            """,
+            rows,
+        )
+        await db.commit()
 
 
 async def upsert_connection_log(
@@ -28,38 +30,40 @@ async def upsert_connection_log(
     live_map,
     conn_states,
 ) -> None:
-    rows = []
-    for cid, conn in live_map.items():
-        state = conn_states.get(cid)
-        rows.append((
-            cid,
-            conn.process_name,
-            conn.host,
-            conn.dest_port,
-            conn.network,
-            conn.direction,
-            conn.chain,
-            conn.rule,
-            conn.start_ts,
-            int(time.time()),
-            getattr(state, 'last_upload', conn.total_up),
-            getattr(state, 'last_download', conn.total_down),
-        ))
-    if rows:
-        await db.executemany(
-            """            INSERT INTO connection_log (id, process_name, host, dest_port, network, direction, chain, rule, start_ts, last_seen_ts, upload_bytes, download_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                last_seen_ts=excluded.last_seen_ts,
-                upload_bytes=excluded.upload_bytes,
-                download_bytes=excluded.download_bytes,
-                direction=excluded.direction,
-                chain=excluded.chain,
-                rule=excluded.rule;
-            """,
-            rows,
-        )
-        await db.commit()
+    async with write_lock:
+        rows = []
+        for cid, conn in live_map.items():
+            state = conn_states.get(cid)
+            rows.append((
+                cid,
+                conn.process_name,
+                conn.host,
+                conn.dest_port,
+                conn.network,
+                conn.direction,
+                conn.chain,
+                conn.rule,
+                conn.start_ts,
+                int(time.time()),
+                getattr(state, 'last_upload', conn.total_up),
+                getattr(state, 'last_download', conn.total_down),
+            ))
+        if rows:
+            await db.executemany(
+                """
+                INSERT INTO connection_log (id, process_name, host, dest_port, network, direction, chain, rule, start_ts, last_seen_ts, upload_bytes, download_bytes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_seen_ts=excluded.last_seen_ts,
+                    upload_bytes=excluded.upload_bytes,
+                    download_bytes=excluded.download_bytes,
+                    direction=excluded.direction,
+                    chain=excluded.chain,
+                    rule=excluded.rule;
+                """,
+                rows,
+            )
+            await db.commit()
 
 
 async def query_timeseries(
@@ -164,7 +168,8 @@ async def query_distinct_apps(db: aiosqlite.Connection) -> List[str]:
 
 
 async def delete_older_than(db: aiosqlite.Connection, retention_days: int) -> None:
-    cutoff = int(time.time()) - retention_days * 86400
-    await db.execute("DELETE FROM traffic_minute_app WHERE minute_ts < ?", (cutoff,))
-    await db.execute("DELETE FROM connection_log WHERE last_seen_ts < ?", (cutoff,))
-    await db.commit()
+    async with write_lock:
+        cutoff = int(time.time()) - retention_days * 86400
+        await db.execute("DELETE FROM traffic_minute_app WHERE minute_ts < ?", (cutoff,))
+        await db.execute("DELETE FROM connection_log WHERE last_seen_ts < ?", (cutoff,))
+        await db.commit()

@@ -36,6 +36,8 @@ DDL = [
     "CREATE INDEX IF NOT EXISTS idx_conn_lastseen ON connection_log(last_seen_ts);",
 ]
 
+write_lock = asyncio.Lock()
+
 
 async def init_db(path: str) -> aiosqlite.Connection:
     pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
