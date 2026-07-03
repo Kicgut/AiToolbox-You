@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Byte size and time formatting utilities.
  */
 

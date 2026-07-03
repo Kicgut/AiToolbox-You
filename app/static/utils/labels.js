@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Chinese label mappings for table headers and UI elements.
  */
 
