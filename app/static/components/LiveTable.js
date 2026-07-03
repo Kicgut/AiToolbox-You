@@ -1,4 +1,4 @@
-﻿import { ref, computed, onMounted, onUnmounted } from '../../vendor/vue.esm-browser.prod.js';
+﻿import { ref, computed } from '../../vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatSpeed, formatDuration, formatTimestamp } from '../utils/format.js';
 import { label } from '../utils/labels.js';
 
@@ -6,10 +6,10 @@ export default {
     name: 'LiveTable',
     props: {
         liveData: { type: Array, default: () => [] },
+        disconnectedBuffer: { type: Array, default: () => [] },
         directionFilter: { type: String, default: '' }
     },
-    emits: ['update:liveData'],
-    setup(props, { emit }) {
+    setup(props) {
         const sortKey = ref('start_ts');
         const sortAsc = ref(false);
 
@@ -25,6 +25,14 @@ export default {
                 if (va > vb) return sortAsc.value ? 1 : -1;
                 return 0;
             });
+            return data;
+        });
+
+        const filteredDisconnected = computed(() => {
+            let data = props.disconnectedBuffer;
+            if (props.directionFilter) {
+                data = data.filter(c => c.direction === props.directionFilter);
+            }
             return data;
         });
 
@@ -50,7 +58,7 @@ export default {
             return value;
         }
 
-        return { filteredData, headers, sortKey, sortAsc, toggleSort, label, formatCell };
+        return { filteredData, filteredDisconnected, headers, sortKey, sortAsc, toggleSort, label, formatCell };
     },
     template: `
         <div class="table-container">
@@ -67,7 +75,10 @@ export default {
                     <tr v-for="c in filteredData" :key="c.id" :class="c.direction">
                         <td v-for="h in headers" :key="h">{{ formatCell(h, c[h]) }}</td>
                     </tr>
-                    <tr v-if="filteredData.length === 0">
+                    <tr v-for="c in filteredDisconnected" :key="'dc-' + c.id" class="disconnected" :class="c.direction">
+                        <td v-for="h in headers" :key="h">{{ formatCell(h, c[h]) }}</td>
+                    </tr>
+                    <tr v-if="filteredData.length === 0 && filteredDisconnected.length === 0">
                         <td :colspan="headers.length" class="empty-state">暂无活跃连接</td>
                     </tr>
                 </tbody>

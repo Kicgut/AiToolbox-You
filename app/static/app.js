@@ -1,4 +1,4 @@
-﻿import { ref, onMounted, onUnmounted, provide } from '../vendor/vue.esm-browser.prod.js';
+﻿import { ref, onMounted, onUnmounted } from '../vendor/vue.esm-browser.prod.js';
 import StatusBar from './components/StatusBar.js';
 import TrafficChart from './components/TrafficChart.js';
 import TopTable from './components/TopTable.js';
@@ -11,8 +11,10 @@ export default {
         const liveData = ref([]);
         const liveDirection = ref('');
         const darkMode = ref(false);
+        const disconnectedBuffer = ref([]); // recently disconnected connections
         let ws = null;
         let statusBarRef = ref(null);
+        let prevConnIds = new Set();
 
         // Dark mode: read system preference once, then localStorage
         const savedTheme = localStorage.getItem('theme');
@@ -34,6 +36,28 @@ export default {
             ws.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
+                    const newIds = new Set(data.map(c => c.id));
+
+                    // Find connections that disappeared
+                    for (const id of prevConnIds) {
+                        if (!newIds.has(id)) {
+                            const existing = liveData.value.find(c => c.id === id);
+                            if (existing) {
+                                disconnectedBuffer.value.push({
+                                    ...existing,
+                                    _disconnectedAt: Date.now()
+                                });
+                            }
+                        }
+                    }
+                    prevConnIds = newIds;
+
+                    // Clean up old disconnected entries (>10s)
+                    const now = Date.now();
+                    disconnectedBuffer.value = disconnectedBuffer.value.filter(
+                        c => now - c._disconnectedAt < 10000
+                    );
+
                     liveData.value = data;
                     if (statusBarRef.value) {
                         statusBarRef.value.updateFromLiveData(data);
@@ -59,7 +83,7 @@ export default {
             if (ws) ws.close();
         });
 
-        return { liveData, liveDirection, darkMode, toggleDarkMode, handleDrilldown, statusBarRef };
+        return { liveData, liveDirection, darkMode, toggleDarkMode, handleDrilldown, statusBarRef, disconnectedBuffer };
     },
     template: `
         <div class="app-container">
@@ -87,7 +111,7 @@ export default {
                         </select>
                     </div>
                 </div>
-                <LiveTable :liveData="liveData" :directionFilter="liveDirection" />
+                <LiveTable :liveData="liveData" :disconnectedBuffer="disconnectedBuffer" :directionFilter="liveDirection" />
             </div>
         </div>
     `

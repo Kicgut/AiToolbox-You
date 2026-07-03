@@ -169,6 +169,29 @@ body {
     background: rgba(255,255,255,0.1);
 }
 
+/* ===== Sparkline ===== */
+.speed-block {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.sparkline-wrapper {
+    width: 120px;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+/* ===== Disconnect buffer ===== */
+.data-table tr.disconnected {
+    opacity: 0.4;
+    transition: opacity 1s ease-out;
+}
+
+.data-table tr.disconnected td {
+    font-style: italic;
+}
+
 /* ===== Cards ===== */
 .card {
     background: var(--bg-card);
