@@ -1,0 +1,10 @@
+user.message
+tool.started
+tool.completed
+file.changed
+usage.snapshot
+unknown
+assistant.message
+tool.started
+tool.completed
+error

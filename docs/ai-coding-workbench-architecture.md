@@ -49,10 +49,10 @@
 另外已直接启动本机 `codex app-server`，通过 stdio 成功完成：
 
 ```text
-initialize → initialized → thread/list(limit=1)
+initialize → initialized → thread/list(limit=1) → thread/read(includeTurns=false)
 ```
 
-返回结果确认平台为 Windows，并成功列出 1 条会话。该验证没有调用 `turn/start`，因此没有发生模型请求。
+返回结果确认平台为 Windows，并成功只读取会话元数据；`includeTurns=false` 返回 `turns_count=0`。该验证没有调用 `thread/start` 或 `turn/start`，因此没有发生模型请求。
 
 ### 2.2 本机会话数据
 
@@ -901,11 +901,11 @@ WS     /ws/runs
 
 ### Phase 0：技术 Spike
 
-- Codex App Server 无费用 `initialize`、`thread/list` 已验证；继续完成 `thread/read` 验证。
-- Codex `exec --json` mock/fixture 流解析。
-- Claude `stream-json` mock/fixture 流解析。
-- 复制后的脱敏会话 fixture 与 golden event 测试。
-- CC Switch v10、当前源码 schema 和缺失数据库三种兼容测试。
+- Codex App Server 无费用 `initialize`、`thread/list`、`thread/read(includeTurns=false)` 已验证。
+- Codex/Claude JSONL mock/fixture 流解析已建立最小 golden event 测试。
+- 脱敏 fixture 覆盖 user、assistant、tool、file.changed、usage、error、unknown 和 invalid JSON tail。
+- CC Switch v10、本机缺失/损坏数据库和当前源码 schema 能力清单已建立只读兼容测试。
+- fake CLI process supervisor 覆盖 argv、stdin、stdout、stderr、timeout 和有限输出缓冲。
 
 验收：不发送真实模型请求，也能完成能力探测、历史索引和模拟实时流。
 

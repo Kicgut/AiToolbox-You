@@ -1,0 +1,6 @@
+{"type":"message","role":"user","content":"<redacted user prompt>"}
+{"type":"tool_call","name":"shell","args":{"command":"pytest"}}
+{"type":"tool_result","name":"shell","content":"13 passed"}
+{"type":"file_changed","path":"<redacted>/app.py","operation":"modified"}
+{"type":"usage","usage":{"input_tokens":12,"output_tokens":4}}
+{"type":"future_event","payload":{"kept":true}}

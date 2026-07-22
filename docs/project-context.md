@@ -1,7 +1,7 @@
 # AI 编程工作台项目上下文
 
 > 性质：人工维护、可审查、随项目保存的长期上下文；它不是 Codex 自动生成的 Memory。  
-> 最近更新：2026-07-21。  
+> 最近更新：2026-07-22。  
 > 规则：只记录已验证事实、已确认决策、当前状态和关键待决项。
 
 ## 为什么不放在 `.codex/memories/`
@@ -15,7 +15,7 @@
 
 - 架构文档：`docs/ai-coding-workbench-architecture.md`，状态为 Draft v0.1。
 - 阶段计划：Phase 0–5 拆分到 `plans/ai-coding-workbench/`，均需逐阶段审查批准。
-- 当前没有获得任何产品代码 Phase 的实施批准。
+- Phase 0 已完成隔离原型实现和内部验证，状态为待验收；尚未开始 Phase 1。
 - 已建立根 `AGENTS.md` 和 repo skill `$ai-coding-workbench`。
 
 ## 已确认决策
@@ -34,6 +34,8 @@
 
 - 本机 Codex CLI 0.144.4 提供 `resume`、`exec --json`、`exec resume --json` 和 `app-server`。
 - 已通过 stdio 对 App Server 完成 `initialize → initialized → thread/list(limit=1)`，未创建 Turn、未产生模型请求。
+- 2026-07-22 已通过 `codex.cmd app-server --stdio` 完成 `thread/read(includeTurns=false)` 只读验证；未调用 `thread/start` 或 `turn/start`。
+- Codex App Server `generate-json-schema` 可生成稳定 schema，当前 schema 包含 `thread/list` 和 `thread/read`。
 - 本机 Claude Code 2.1.200 提供 `--resume`、`--continue`、`--fork-session` 和 `stream-json`。
 - Codex 与 Claude 的本地 JSONL 足以解析消息、工具调用、工具结果和 usage，但历史文件通常缺少可靠账号身份。
 - 本机 Cockpit Tools 和 CC Switch 可以与只读扫描同时运行。
@@ -41,6 +43,8 @@
 - 2026-07-21 官方最新 CC Switch 为 [3.18.0](https://github.com/farion1231/cc-switch/releases/tag/v3.18.0)，其数据库 schema 为 v16。
 - 上述 schema v10/v16 都属于 **CC Switch 自身数据库**，不是本项目数据库版本。当前仓库不存在“本项目数据库 schema v10 → v16”的迁移任务。
 - 现有项目数据库 `proxy-traffic-monitor/data/traffic.db` 的 `PRAGMA user_version = 0`，目前只有 `traffic_minute_app` 和 `connection_log`；新的 AI Coding Workbench 自有数据库尚未实施，将在 Phase 1 建立独立 schema version 和迁移机制。
+- Phase 0 已在 `proxy-traffic-monitor/app/ai_workbench/` 建立隔离原型：能力探测、统一事件、只读 CC Switch schema probe 和 fake CLI process supervisor；没有挂入正式 API 或前端页面。
+- Phase 0 process supervisor 仅覆盖 argv/stdin/stdout/stderr/timeout/有限缓冲原型；Windows Job Object 进程树管理留到 Phase 3 正式运行中心实现。
 
 ## 外部软件版本策略
 
