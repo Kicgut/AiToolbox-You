@@ -1,6 +1,6 @@
 # Phase 0：技术基础与兼容性 Spike
 
-> 状态：待验收  
+> 状态：已完成  
 > 依赖：`docs/ai-coding-workbench-architecture.md`  
 > 允许真实模型请求：否  
 > 允许修改第三方数据：否

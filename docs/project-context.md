@@ -15,7 +15,7 @@
 
 - 架构文档：`docs/ai-coding-workbench-architecture.md`，状态为 Draft v0.1。
 - 阶段计划：Phase 0–5 拆分到 `plans/ai-coding-workbench/`，均需逐阶段审查批准。
-- Phase 0 已完成隔离原型实现和内部验证，状态为待验收；尚未开始 Phase 1。
+- Phase 0 已完成并视为用户验收通过；Phase 1 已开始实施，只读会话中心已有首个可运行垂直切片。
 - 已建立根 `AGENTS.md` 和 repo skill `$ai-coding-workbench`。
 
 ## 已确认决策
@@ -45,6 +45,7 @@
 - 现有项目数据库 `proxy-traffic-monitor/data/traffic.db` 的 `PRAGMA user_version = 0`，目前只有 `traffic_minute_app` 和 `connection_log`；新的 AI Coding Workbench 自有数据库尚未实施，将在 Phase 1 建立独立 schema version 和迁移机制。
 - Phase 0 已在 `proxy-traffic-monitor/app/ai_workbench/` 建立隔离原型：能力探测、统一事件、只读 CC Switch schema probe 和 fake CLI process supervisor；没有挂入正式 API 或前端页面。
 - Phase 0 process supervisor 仅覆盖 argv/stdin/stdout/stderr/timeout/有限缓冲原型；Windows Job Object 进程树管理留到 Phase 3 正式运行中心实现。
+- Phase 1 已建立 Workbench SQLite schema v1、只读 profile discovery、JSONL 索引 API 和 `/workbench` Vite 前端；当前仍缺 watcher、Cockpit 白名单连接器、完整分叉差异摘要、虚拟列表、Markdown/diff 渲染和 FTS5 管理。
 
 ## 外部软件版本策略
 

@@ -4,6 +4,8 @@
 **/.pytest_cache/
 **/venv/
 **/.venv/
+**/node_modules/
+**/.vite/
 
 # Local runtime data and machine-specific configuration
 proxy-traffic-monitor/data/

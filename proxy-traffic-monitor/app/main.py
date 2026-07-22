@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import live, stats, status
+from app.api import ai_workbench, live, stats, status
 from app.clash_client import ClashClient
 from app.collector import Collector
 from app.config import load_config
@@ -34,11 +34,17 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(live.router)
 app.include_router(stats.router)
 app.include_router(status.router)
+app.include_router(ai_workbench.router)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return open("app/static/index.html", encoding="utf-8").read()
+
+
+@app.get("/workbench", response_class=HTMLResponse)
+async def workbench():
+    return open("app/static/workbench/index.html", encoding="utf-8").read()
 
 
 if __name__ == "__main__":
