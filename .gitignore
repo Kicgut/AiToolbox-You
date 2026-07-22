@@ -1,5 +1,24 @@
-venv/
-__pycache__/
-*.pyc
-data/
-config.yaml
+# Python caches and local environments
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/venv/
+**/.venv/
+
+# Local runtime data and machine-specific configuration
+proxy-traffic-monitor/data/
+proxy-traffic-monitor/config.yaml
+.claude/settings.local.json
+.impeccable/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+
+# Logs, temporary files, and operating-system metadata
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store

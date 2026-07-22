@@ -1,0 +1,9 @@
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+# Project-scoped Codex configuration is loaded only after this workspace is trusted.
+# This enables the host-local recall layer while working in this trusted project.
+# Generated files remain under CODEX_HOME/memories (normally ~/.codex/memories),
+# not this repository; required project rules remain in AGENTS.md and docs/.
+[features]
+memories = true

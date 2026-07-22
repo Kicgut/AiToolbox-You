@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Coding Workbench"
+  short_description: "按已确认架构规划、审查、实施并验证 AI 编程工作台各阶段任务"
+  default_prompt: "Use $ai-coding-workbench to review the current phase plan and carry out only the confirmed scope."

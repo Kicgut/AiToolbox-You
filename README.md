@@ -1,18 +1,16 @@
-﻿# Proxy Traffic Monitor
+# AiToolbox-You
 
-Local dashboard for Clash/Mihomo traffic split between proxy and direct connections.
+面向本地 AI 编程与网络使用分析的工具箱。目前包含可运行的代理流量监控服务，以及正在逐阶段审查中的 Codex CLI / Claude Code 统一会话、统计、实时执行和自动任务工作台设计。
 
-## Prerequisites
+## 当前内容
 
-1. Enable `external-controller` in Clash Verge / Mihomo (default `127.0.0.1:9090`).
-2. If the client uses a secret, copy `config.yaml.example` to `config.yaml` and set `clash_api.secret`.
-3. Set `find-process-mode: always` in Clash core config so process names are available.
-4. Run `run.bat` and open `http://127.0.0.1:8899`.
+- [`proxy-traffic-monitor/`](proxy-traffic-monitor/)：Clash/Mihomo 代理与直连流量监控。
+- [`docs/ai-coding-workbench-architecture.md`](docs/ai-coding-workbench-architecture.md)：AI 编程工作台总体架构。
+- [`plans/ai-coding-workbench/`](plans/ai-coding-workbench/)：待逐阶段审查和批准的实施计划。
+- [`AGENTS.md`](AGENTS.md)：仓库协作约束和安全边界。
 
-## Development
+AI 编程工作台当前仍处于设计与计划审查阶段；阶段文件获得明确批准前不会开始对应产品代码实现。
 
-Run tests:
-```
-pip install -r requirements-dev.txt
-pytest
-```
+## 开发
+
+现有流量监控服务的运行与测试方法见 [`proxy-traffic-monitor/README.md`](proxy-traffic-monitor/README.md)。
