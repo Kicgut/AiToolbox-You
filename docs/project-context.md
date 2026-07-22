@@ -45,7 +45,7 @@
 - 现有项目数据库 `proxy-traffic-monitor/data/traffic.db` 的 `PRAGMA user_version = 0`，目前只有 `traffic_minute_app` 和 `connection_log`；新的 AI Coding Workbench 自有数据库尚未实施，将在 Phase 1 建立独立 schema version 和迁移机制。
 - Phase 0 已在 `proxy-traffic-monitor/app/ai_workbench/` 建立隔离原型：能力探测、统一事件、只读 CC Switch schema probe 和 fake CLI process supervisor；没有挂入正式 API 或前端页面。
 - Phase 0 process supervisor 仅覆盖 argv/stdin/stdout/stderr/timeout/有限缓冲原型；Windows Job Object 进程树管理留到 Phase 3 正式运行中心实现。
-- Phase 1 已建立 Workbench SQLite schema v1、只读 profile discovery、JSONL 索引 API 和 `/workbench` Vite 前端；当前仍缺 watcher、Cockpit 白名单连接器、完整分叉差异摘要、虚拟列表、Markdown/diff 渲染和 FTS5 管理。
+- Phase 1 已建立 Workbench SQLite schema v1、只读 profile discovery、手动目录 API、Cockpit 白名单读取、JSONL 索引/reconcile、差异摘要、FTS5 管理 API 和 `/workbench` Vite 前端；内部验证通过，状态为待验收。
 
 ## 外部软件版本策略
 

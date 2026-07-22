@@ -30,6 +30,7 @@ type SessionDetail = {
   session: SessionRow & Record<string, unknown>;
   profile: Record<string, unknown> | null;
   copies: Array<Record<string, unknown>>;
+  diffSummary: Record<string, unknown>;
   events: EventRow[];
   nextEventCursor: number | null;
 };
@@ -44,14 +45,23 @@ type ProfileRow = {
   indexed: boolean;
 };
 
+type SearchStatus = {
+  enabled: boolean;
+  indexed_events: number;
+};
+
 const api = {
   async get<T>(url: string): Promise<T> {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     return response.json();
   },
-  async post<T>(url: string): Promise<T> {
-    const response = await fetch(url, { method: 'POST' });
+  async post<T>(url: string, body?: unknown): Promise<T> {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     return response.json();
   }
@@ -68,12 +78,20 @@ const useWorkbenchStore = defineStore('workbench', {
     loading: false,
     scanning: false,
     error: '',
-    scanSummary: null as Record<string, unknown> | null
+    scanSummary: null as Record<string, unknown> | null,
+    searchStatus: null as SearchStatus | null,
+    manualTool: 'codex',
+    manualRoot: '',
+    virtualStart: 0,
+    inspectorOpen: false
   }),
   actions: {
     async loadProfiles() {
       const payload = await api.get<{ data: ProfileRow[] }>('/api/ai-workbench/profiles');
       this.profiles = payload.data;
+    },
+    async loadSearchStatus() {
+      this.searchStatus = await api.get<SearchStatus>('/api/ai-workbench/search/status');
     },
     async loadSessions() {
       this.loading = true;
@@ -84,6 +102,7 @@ const useWorkbenchStore = defineStore('workbench', {
         if (this.search) params.set('search', this.search);
         const payload = await api.get<{ data: SessionRow[] }>(`/api/ai-workbench/sessions?${params}`);
         this.sessions = payload.data;
+        this.virtualStart = 0;
         if (!this.selectedId && this.sessions.length) await this.selectSession(this.sessions[0].id);
       } catch (error) {
         this.error = error instanceof Error ? error.message : '加载失败';
@@ -106,9 +125,46 @@ const useWorkbenchStore = defineStore('workbench', {
         this.scanning = false;
       }
     },
+    async reconcile() {
+      this.scanning = true;
+      this.error = '';
+      try {
+        this.scanSummary = await api.post<Record<string, unknown>>('/api/ai-workbench/reconcile');
+        await this.loadSessions();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '增量扫描失败';
+      } finally {
+        this.scanning = false;
+      }
+    },
+    async addManualProfile() {
+      this.error = '';
+      try {
+        await api.post('/api/ai-workbench/profiles/manual', {
+          tool: this.manualTool,
+          config_root: this.manualRoot
+        });
+        this.manualRoot = '';
+        await this.loadProfiles();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '添加目录失败';
+      }
+    },
+    async rebuildSearch() {
+      this.scanSummary = await api.post<Record<string, unknown>>('/api/ai-workbench/search/rebuild');
+      await this.loadSearchStatus();
+    },
+    async clearSearch() {
+      this.scanSummary = await api.post<Record<string, unknown>>('/api/ai-workbench/search/clear');
+      await this.loadSearchStatus();
+    },
     async selectSession(id: string) {
       this.selectedId = id;
       this.detail = await api.get<SessionDetail>(`/api/ai-workbench/sessions/${id}`);
+      this.inspectorOpen = true;
+    },
+    updateVirtualStart(scrollTop: number, rowHeight: number) {
+      this.virtualStart = Math.max(0, Math.floor(scrollTop / rowHeight) - 5);
     }
   }
 });
@@ -116,8 +172,20 @@ const useWorkbenchStore = defineStore('workbench', {
 const SessionCenter = defineComponent({
   setup() {
     const store = useWorkbenchStore();
-    store.loadProfiles().then(() => store.loadSessions());
+    store.loadProfiles().then(() => store.loadSearchStatus()).then(() => store.loadSessions());
     return { store };
+  },
+  computed: {
+    visibleSessions(): SessionRow[] {
+      return this.store.sessions.slice(this.store.virtualStart, this.store.virtualStart + 70);
+    },
+    topSpacer(): string {
+      return `${this.store.virtualStart * 86}px`;
+    },
+    bottomSpacer(): string {
+      const hidden = Math.max(0, this.store.sessions.length - this.store.virtualStart - 70);
+      return `${hidden * 86}px`;
+    }
   },
   methods: {
     formatTime(value: number | null) {
@@ -127,6 +195,14 @@ const SessionCenter = defineComponent({
     pretty(value: unknown) {
       if (!value) return '';
       return JSON.stringify(value, null, 2);
+    },
+    renderText(event: EventRow) {
+      const text = event.text_content || this.pretty(event.structured_json);
+      return renderEventHtml(text, event.event_type);
+    },
+    onSessionScroll(event: Event) {
+      const target = event.target as HTMLElement;
+      this.store.updateVirtualStart(target.scrollTop, 86);
     }
   },
   template: `
@@ -140,14 +216,28 @@ const SessionCenter = defineComponent({
           </select>
           <button @click="store.scan" :disabled="store.scanning">{{ store.scanning ? '扫描中' : '扫描' }}</button>
         </div>
+        <button class="secondary" @click="store.reconcile" :disabled="store.scanning">增量扫描</button>
         <input class="search" v-model="store.search" @keydown.enter="store.loadSessions" placeholder="搜索标题、路径或 Session ID" />
         <button class="secondary" @click="store.loadSessions">应用筛选</button>
 
+        <div class="manual-profile">
+          <select v-model="store.manualTool" aria-label="手动目录工具">
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
+          <input v-model="store.manualRoot" placeholder="添加配置根目录" />
+          <button class="secondary" @click="store.addManualProfile">添加</button>
+        </div>
+
         <div v-if="store.error" class="notice error">{{ store.error }}</div>
         <div v-if="store.scanSummary" class="notice">
-          索引 {{ store.scanSummary.sessions_indexed }} 个会话，{{ store.scanSummary.events_indexed }} 条事件
+          {{ pretty(store.scanSummary) }}
         </div>
-        <div class="notice">全文索引默认关闭；当前搜索覆盖标题、路径和 Session ID。</div>
+        <div class="notice search-controls">
+          <span>全文索引 {{ store.searchStatus?.enabled ? '已开启' : '关闭' }} · {{ store.searchStatus?.indexed_events || 0 }} 条</span>
+          <button class="mini" @click="store.rebuildSearch">重建</button>
+          <button class="mini quiet" @click="store.clearSearch">清空</button>
+        </div>
 
         <section class="profile-strip">
           <div v-for="profile in store.profiles" :key="profile.id" class="profile-row" :class="{ bad: !profile.valid }">
@@ -156,10 +246,11 @@ const SessionCenter = defineComponent({
           </div>
         </section>
 
-        <div class="session-list" aria-live="polite">
+        <div class="session-list" aria-live="polite" @scroll="onSessionScroll">
           <div v-if="store.loading" class="empty">加载会话中</div>
+          <div :style="{ height: topSpacer }"></div>
           <button
-            v-for="session in store.sessions"
+            v-for="session in visibleSessions"
             :key="session.id"
             class="session-item"
             :class="{ selected: session.id === store.selectedId }"
@@ -169,6 +260,7 @@ const SessionCenter = defineComponent({
             <span class="session-meta">{{ session.tool }} · {{ session.event_count }} events</span>
             <span class="session-path">{{ session.transcript_path }}</span>
           </button>
+          <div :style="{ height: bottomSpacer }"></div>
           <div v-if="!store.loading && !store.sessions.length" class="empty">
             没有已索引会话。先点击扫描，或确认 Codex/Claude 默认目录存在。
           </div>
@@ -184,6 +276,7 @@ const SessionCenter = defineComponent({
               <p>{{ store.detail.session.tool }} · {{ formatTime(store.detail.session.updated_at) }}</p>
             </div>
             <span class="badge">{{ store.detail.session.divergence_status }}</span>
+            <button class="secondary inspector-toggle" @click="store.inspectorOpen = !store.inspectorOpen">检查器</button>
           </div>
           <div class="timeline">
             <article v-for="event in store.detail.events" :key="event.id" class="event" :data-type="event.event_type">
@@ -191,8 +284,7 @@ const SessionCenter = defineComponent({
                 <span>{{ event.sequence_no }} · {{ event.event_type }}</span>
                 <strong>{{ event.role || event.data_quality }}</strong>
               </header>
-              <p v-if="event.text_content">{{ event.text_content }}</p>
-              <pre v-else-if="event.structured_json">{{ pretty(event.structured_json) }}</pre>
+              <div class="event-body" v-html="renderText(event)"></div>
               <details v-if="event.raw_json">
                 <summary>Raw</summary>
                 <pre>{{ pretty(event.raw_json) }}</pre>
@@ -202,7 +294,7 @@ const SessionCenter = defineComponent({
         </template>
       </section>
 
-      <aside class="inspector-pane">
+      <aside class="inspector-pane" :class="{ open: store.inspectorOpen }">
         <h2>检查器</h2>
         <template v-if="store.detail">
           <dl>
@@ -217,12 +309,36 @@ const SessionCenter = defineComponent({
             <span>{{ copy.divergence_status }}</span>
             <small>{{ copy.event_count }} events</small>
           </div>
+          <h3>差异摘要</h3>
+          <pre>{{ pretty(store.detail.diffSummary) }}</pre>
         </template>
         <div v-else class="empty">会话元数据会显示在这里。</div>
       </aside>
     </main>
   `
 });
+
+function renderEventHtml(text: string, eventType: string): string {
+  const escaped = escapeHtml(text);
+  if (eventType === 'file.changed' || escaped.includes('\n+') || escaped.includes('\n-')) {
+    return `<pre class="diff">${escaped
+      .split('\n')
+      .map((line) => {
+        const klass = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : '';
+        return `<span class="${klass}">${line}</span>`;
+      })
+      .join('\n')}</pre>`;
+  }
+  const withCode = escaped.replace(/```([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>');
+  return withCode.replace(/\n/g, '<br />');
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return map[char];
+  });
+}
 
 const AppShell = defineComponent({
   template: `
@@ -248,4 +364,3 @@ const router = createRouter({
 });
 
 createApp(AppShell).use(createPinia()).use(router).mount('#app');
-

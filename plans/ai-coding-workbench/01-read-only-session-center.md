@@ -1,6 +1,6 @@
 # Phase 1：只读统一会话中心
 
-> 状态：实施中  
+> 状态：待验收  
 > 依赖：Phase 0 已完成  
 > 允许真实模型请求：否  
 > 允许修改第三方数据：否
@@ -34,58 +34,58 @@
 - [x] 创建 `conversation_families`、`session_copies`、`session_relations`。
 - [x] 创建 `turns`、`events`、`source_checkpoints`。
 - [x] 添加唯一键、外键、cursor 查询索引和 schema version。
-- [ ] 实现数据库可重建策略和损坏恢复说明。
+- [x] 实现数据库可重建策略和损坏恢复说明。
 
 ### P1-02：Profile 发现
 
-- [ ] 支持手动目录、环境变量和默认目录。
+- [x] 支持手动目录、环境变量和默认目录。
 - [x] Codex 支持多个 `CODEX_HOME`；Claude 支持多个 `CLAUDE_CONFIG_DIR`。
-- [ ] 可选 Cockpit 连接器只读取用户授权的实例路径白名单。
+- [x] 可选 Cockpit 连接器只读取用户授权的实例路径白名单。
 - [x] 对候选目录做特征校验，不递归扫描任意用户目录。
-- [ ] 记录 discovery source 和 capability probe。
+- [x] 记录 discovery source 和 capability probe。
 
 验收环境：Cockpit 未安装、已安装未启用连接器、已安装已启用、Cockpit 正运行。
 
 ### P1-03：增量索引器
 
-- [ ] 实现 watcher + periodic reconcile。
+- [x] 实现 watcher + periodic reconcile。
 - [x] 保存 file identity、size、mtime、offset、content hash 和 parser version。
 - [x] 只提交完整换行事件，容忍正在写入的尾行。
-- [ ] 处理文件替换、缩短、移动、归档和暂时占用。
-- [ ] 加入每 profile 扫描限速、取消和进度事件。
+- [x] 处理文件替换、缩短、移动、归档和暂时占用。
+- [x] 加入每 profile 扫描限速、取消和进度事件。
 
 ### P1-04：Codex 解析器
 
-- [ ] 解析 session meta、turn context、messages、tool/command/file、usage 和 error。
-- [ ] 识别 archived sessions 和 session index 标题。
+- [x] 解析 session meta、turn context、messages、tool/command/file、usage 和 error。
+- [x] 识别 archived sessions 和 session index 标题。
 - [x] 未知记录降级为 `unknown`。
-- [ ] 对 CLI 版本和 parser version 建立兼容测试。
+- [x] 对 CLI 版本和 parser version 建立兼容测试。
 
 ### P1-05：Claude 解析器
 
-- [ ] 解析 user/assistant/system、thinking summary、tool use/result 和 usage。
-- [ ] 识别主会话、subagent、attachment 和 file history snapshot。
-- [ ] 解析项目目录编码并恢复规范化路径。
+- [x] 解析 user/assistant/system、thinking summary、tool use/result 和 usage。
+- [x] 识别主会话、subagent、attachment 和 file history snapshot。
+- [x] 解析项目目录编码并恢复规范化路径。
 - [x] 未知 content type 不使会话失败。
 
 ### P1-06：会话族与分叉检测
 
 - [x] 物理唯一键包含 tool、profile root、native id、transcript path。
-- [ ] 依据初始指纹和共同事件前缀建立 family。
-- [ ] 计算 `in_sync/ahead/diverged/unknown`。
+- [x] 依据初始指纹和共同事件前缀建立 family。
+- [x] 计算 `in_sync/ahead/diverged/unknown`。
 - [x] 不自动合并 divergent 内容。
-- [ ] API 提供副本列表和差异摘要。
+- [x] API 提供副本列表和差异摘要。
 
 ### P1-07：账号和项目归属
 
-- [ ] 实现 `exact/likely/unknown` 可信度。
+- [x] 实现 `exact/likely/unknown` 可信度。
 - [x] 历史无证据时显示账号未知。
-- [ ] 项目保存原 cwd、canonical path、repo root、worktree 和存在状态。
+- [x] 项目保存原 cwd、canonical path、repo root、worktree 和存在状态。
 - [x] 不持久化 credential content。
 
 ### P1-08：API
 
-- [ ] 会话列表支持 cursor、工具、profile、项目、时间、归档、分叉和搜索过滤。
+- [x] 会话列表支持 cursor、工具、profile、项目、时间、归档、分叉和搜索过滤。
 - [x] 详情按事件分页，不返回无限事件数组。
 - [x] 提供 profile 诊断、扫描状态、失败重试和数据源信息。
 - [x] 定义稳定 DTO，禁止直接返回 raw tool schema。
@@ -100,18 +100,18 @@
 
 ### P1-10：会话 UI
 
-- [ ] 左栏筛选和虚拟会话列表。
-- [ ] 中栏 Turn 时间线、Markdown、代码、tool、command、diff、unknown raw view。
+- [x] 左栏筛选和虚拟会话列表。
+- [x] 中栏 Turn 时间线、Markdown、代码、tool、command、diff、unknown raw view。
 - [x] 右栏元数据、关系和副本状态。
-- [ ] 窄屏转换为列表/详情路由和检查器抽屉。
+- [x] 窄屏转换为列表/详情路由和检查器抽屉。
 - [x] 支持 reduced motion。
 
 ### P1-11：全文搜索与隐私
 
 - [x] 全文索引可配置开关；未确认前默认关闭。
-- [ ] 建立 FTS5 重建和清除路径。
-- [ ] 写入索引前执行最小密钥模式脱敏。
-- [ ] UI 明确显示搜索覆盖范围。
+- [x] 建立 FTS5 重建和清除路径。
+- [x] 写入索引前执行最小密钥模式脱敏。
+- [x] UI 明确显示搜索覆盖范围。
 
 ## 测试矩阵
 
@@ -154,4 +154,10 @@
 - 2026-07-22：验证命令 `python -m pytest tests\ai_workbench\phase1 -q`，结果 `5 passed`。
 - 2026-07-22：验证命令 `python -m pytest -q`，结果 `23 passed`。
 - 2026-07-22：验证命令 `npm run build`，结果 Vite build succeeded。
-- 当前未完成：watcher、手动目录 API、Cockpit 白名单连接器、完整 ahead/diverged 差异摘要、Markdown/diff 渲染、虚拟列表、FTS5 重建与清除。
+- 2026-07-22：补齐手动目录 API、reconcile 增量扫描、scan_runs、PollingWatcher、Cockpit 白名单读取、FTS5 重建/清空/status、差异摘要和列表过滤。
+- 2026-07-22：前端补齐手动 profile 添加、增量扫描、全文索引控制、虚拟会话列表、Markdown/代码/diff 基础渲染、移动端检查器抽屉和差异摘要展示。
+- 2026-07-22：验证命令 `python -m pytest tests\ai_workbench\phase1 -q`，结果 `8 passed`。
+- 2026-07-22：验证命令 `python -m pytest -q`，结果 `26 passed`。
+- 2026-07-22：验证命令 `npm run build`，结果 Vite build succeeded。
+- 2026-07-22：验证命令 `python C:\Users\YOU2\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\ai-coding-workbench`，结果 `Skill is valid!`。
+- 2026-07-22：Phase 1 已达到内部退出标准，状态改为 `待验收`；不会自动进入 Phase 2。

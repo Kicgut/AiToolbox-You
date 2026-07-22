@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,17 @@ class ScanSummary:
     sessions_indexed: int
     events_indexed: int
     errors: list[str]
+    run_id: str | None = None
 
 
-def scan_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000) -> ScanSummary:
-    profiles = discover_profiles()
+def scan_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000, changed_only: bool = False) -> ScanSummary:
+    run_id = uuid.uuid4().hex
+    started_at = int(time.time())
+    conn.execute(
+        "INSERT INTO scan_runs(id, started_at, status) VALUES(?, ?, 'running')",
+        (run_id, started_at),
+    )
+    profiles = discover_profiles(manual_roots=_manual_roots(conn), cockpit_whitelist=_cockpit_whitelist_path())
     files_seen = 0
     sessions_indexed = 0
     events_indexed = 0
@@ -41,6 +49,8 @@ def scan_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000
         profiles_indexed += 1
         for transcript in _iter_transcripts(profile, max_files_per_profile):
             files_seen += 1
+            if changed_only and not _needs_reindex(conn, transcript):
+                continue
             try:
                 event_count = _index_transcript(conn, profile, transcript)
                 events_indexed += event_count
@@ -49,23 +59,128 @@ def scan_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000
                 errors.append(f"{transcript}: {exc}")
             except sqlite3.Error as exc:
                 errors.append(f"{transcript}: {exc}")
-    conn.commit()
-    return ScanSummary(
+    _mark_missing_sources(conn)
+    summary = ScanSummary(
         profiles_seen=len(profiles),
         profiles_indexed=profiles_indexed,
         files_seen=files_seen,
         sessions_indexed=sessions_indexed,
         events_indexed=events_indexed,
         errors=errors[:20],
+        run_id=run_id,
     )
+    conn.execute(
+        """
+        UPDATE scan_runs SET completed_at = ?, status = ?, profiles_seen = ?, profiles_indexed = ?,
+            files_seen = ?, sessions_indexed = ?, events_indexed = ?, errors_json = ?
+        WHERE id = ?
+        """,
+        (
+            int(time.time()),
+            "completed" if not errors else "completed_with_errors",
+            summary.profiles_seen,
+            summary.profiles_indexed,
+            summary.files_seen,
+            summary.sessions_indexed,
+            summary.events_indexed,
+            json.dumps(summary.errors, ensure_ascii=False),
+            run_id,
+        ),
+    )
+    conn.commit()
+    return summary
 
 
-def list_sessions(conn: sqlite3.Connection, *, tool: str | None = None, search: str | None = None, limit: int = 100, cursor: int = 0) -> dict[str, Any]:
+def reconcile_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000) -> ScanSummary:
+    return scan_sessions(conn, max_files_per_profile=max_files_per_profile, changed_only=True)
+
+
+def add_manual_profile(conn: sqlite3.Connection, *, tool: str, config_root: Path, display_name: str | None = None) -> dict[str, Any]:
+    if tool not in {ToolKind.CODEX.value, ToolKind.CLAUDE.value}:
+        raise ValueError("unsupported tool")
+    normalized = str(config_root.expanduser())
+    profile_id = f"manual:{tool}:{hashlib.sha1(normalized.lower().encode('utf-8')).hexdigest()[:16]}"
+    conn.execute(
+        """
+        INSERT INTO manual_profile_roots(id, tool, config_root, display_name, enabled, created_at)
+        VALUES(?, ?, ?, ?, 1, ?)
+        ON CONFLICT(tool, config_root) DO UPDATE SET display_name=excluded.display_name, enabled=1
+        """,
+        (profile_id, tool, normalized, display_name, int(time.time())),
+    )
+    conn.commit()
+    return {"id": profile_id, "tool": tool, "config_root": normalized, "display_name": display_name}
+
+
+def list_manual_profiles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [dict(row) for row in conn.execute("SELECT * FROM manual_profile_roots ORDER BY created_at DESC").fetchall()]
+
+
+def latest_scan_runs(conn: sqlite3.Connection, *, limit: int = 10) -> list[dict[str, Any]]:
+    rows = conn.execute("SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def rebuild_fts(conn: sqlite3.Connection) -> dict[str, int]:
+    conn.execute("DELETE FROM events_fts")
+    rows = conn.execute(
+        "SELECT id, session_copy_id, text_content FROM events WHERE text_content IS NOT NULL AND text_content != ''"
+    ).fetchall()
+    inserted = 0
+    for row in rows:
+        text = _redact_for_index(row["text_content"])
+        if not text:
+            continue
+        conn.execute(
+            "INSERT INTO events_fts(session_copy_id, event_id, text_content) VALUES(?, ?, ?)",
+            (row["session_copy_id"], row["id"], text),
+        )
+        inserted += 1
+    conn.commit()
+    return {"indexed_events": inserted}
+
+
+def clear_fts(conn: sqlite3.Connection) -> dict[str, int]:
+    before = conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()["count"]
+    conn.execute("DELETE FROM events_fts")
+    conn.commit()
+    return {"cleared_events": before}
+
+
+def fts_status(conn: sqlite3.Connection) -> dict[str, Any]:
+    row = conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()
+    return {"enabled": row["count"] > 0, "indexed_events": row["count"]}
+
+
+def list_sessions(
+    conn: sqlite3.Connection,
+    *,
+    tool: str | None = None,
+    search: str | None = None,
+    profile_id: str | None = None,
+    project_id: str | None = None,
+    divergence: str | None = None,
+    archived: bool | None = None,
+    limit: int = 100,
+    cursor: int = 0,
+) -> dict[str, Any]:
     where = ["1=1"]
     params: list[Any] = []
     if tool:
         where.append("tool = ?")
         params.append(tool)
+    if profile_id:
+        where.append("profile_id = ?")
+        params.append(profile_id)
+    if project_id:
+        where.append("project_id = ?")
+        params.append(project_id)
+    if divergence:
+        where.append("divergence_status = ?")
+        params.append(divergence)
+    if archived is not None:
+        where.append("kind = ?" if archived else "kind != ?")
+        params.append("archived")
     if search:
         where.append("(title LIKE ? OR transcript_path LIKE ? OR native_session_id LIKE ?)")
         needle = f"%{search}%"
@@ -113,17 +228,19 @@ def get_session_detail(conn: sqlite3.Connection, copy_id: str, *, event_limit: i
     for event in page:
         event["structured_json"] = _loads(event["structured_json"])
         event["raw_json"] = _loads(event["raw_json"])
+    diff_summary = _family_diff_summary(conn, copy["family_id"])
     return {
         "session": dict(copy),
         "profile": dict(profile) if profile else None,
         "copies": [dict(row) for row in family_copies],
+        "diffSummary": diff_summary,
         "events": page,
         "nextEventCursor": event_cursor + event_limit if len(events) > event_limit else None,
     }
 
 
 def profile_diagnostics(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    profiles = discover_profiles()
+    profiles = discover_profiles(manual_roots=_manual_roots(conn), cockpit_whitelist=_cockpit_whitelist_path())
     stored = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM tool_profiles").fetchall()}
     result = []
     for profile in profiles:
@@ -315,13 +432,20 @@ def _copy_id(profile: DiscoveredProfile, native_session_id: str, transcript: Pat
 
 
 def _family_id(tool: ToolKind, native_session_id: str, events: list[NormalizedEvent]) -> str:
-    raw = f"{tool.value}|{native_session_id}|{_initial_fingerprint(events)}"
+    raw = f"{tool.value}|{native_session_id}|{_family_fingerprint(events)}"
     return hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _initial_fingerprint(events: list[NormalizedEvent]) -> str:
     values = [f"{event.event_type.value}:{event.role}:{event.text or ''}" for event in events[:3]]
     return hashlib.sha1("\n".join(values).encode("utf-8", errors="replace")).hexdigest()
+
+
+def _family_fingerprint(events: list[NormalizedEvent]) -> str:
+    for event in events:
+        if event.event_type is NormalizedEventType.USER_MESSAGE:
+            return hashlib.sha1(f"{event.role}:{event.text or ''}".encode("utf-8", errors="replace")).hexdigest()
+    return _initial_fingerprint(events)
 
 
 def _head_hash(events: list[NormalizedEvent]) -> str:
@@ -383,10 +507,102 @@ def _update_divergence(conn: sqlite3.Connection, family_id: str) -> None:
     rows = conn.execute("SELECT id, content_hash, event_count FROM session_copies WHERE family_id = ?", (family_id,)).fetchall()
     if len(rows) <= 1:
         status = "unknown"
+        conn.execute("UPDATE session_copies SET divergence_status = ? WHERE family_id = ?", (status, family_id))
+        return
+    signatures = {row["id"]: _event_signatures(conn, row["id"]) for row in rows}
+    unique = {tuple(value) for value in signatures.values()}
+    if len(unique) == 1:
+        conn.execute("UPDATE session_copies SET divergence_status = 'in_sync' WHERE family_id = ?", (family_id,))
+        return
+    longest_id = max(signatures, key=lambda copy_id: len(signatures[copy_id]))
+    longest = signatures[longest_id]
+    all_prefix = all(_is_prefix(value, longest) for value in signatures.values())
+    if all_prefix:
+        for row in rows:
+            conn.execute(
+                "UPDATE session_copies SET divergence_status = ? WHERE id = ?",
+                ("ahead" if row["id"] == longest_id else "in_sync", row["id"]),
+            )
     else:
-        hashes = {row["content_hash"] for row in rows}
-        status = "in_sync" if len(hashes) == 1 else "diverged"
-    conn.execute("UPDATE session_copies SET divergence_status = ? WHERE family_id = ?", (status, family_id))
+        conn.execute("UPDATE session_copies SET divergence_status = 'diverged' WHERE family_id = ?", (family_id,))
+
+
+def _manual_roots(conn: sqlite3.Connection) -> list[tuple[ToolKind, Path, str | None]]:
+    rows = conn.execute("SELECT tool, config_root, display_name FROM manual_profile_roots WHERE enabled = 1").fetchall()
+    return [(ToolKind(row["tool"]), Path(row["config_root"]), row["display_name"]) for row in rows]
+
+
+def _cockpit_whitelist_path() -> Path:
+    return Path("data") / "ai_workbench" / "cockpit_profile_whitelist.json"
+
+
+def _needs_reindex(conn: sqlite3.Connection, transcript: Path) -> bool:
+    try:
+        stat = transcript.stat()
+    except OSError:
+        return False
+    row = conn.execute("SELECT file_size, mtime_ns, parser_version FROM source_checkpoints WHERE path = ?", (str(transcript),)).fetchone()
+    if row is None:
+        return True
+    return row["file_size"] != stat.st_size or row["mtime_ns"] != stat.st_mtime_ns or row["parser_version"] != PARSER_VERSION
+
+
+def _mark_missing_sources(conn: sqlite3.Connection) -> None:
+    now = int(time.time())
+    for row in conn.execute("SELECT path FROM source_checkpoints WHERE status = 'active'").fetchall():
+        if not Path(row["path"]).exists():
+            conn.execute(
+                "UPDATE source_checkpoints SET status = 'missing', missing_since = ? WHERE path = ?",
+                (now, row["path"]),
+            )
+
+
+def _event_signatures(conn: sqlite3.Connection, copy_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT event_type, role, COALESCE(text_content, structured_json, raw_json, '') AS body FROM events WHERE session_copy_id = ? ORDER BY sequence_no",
+        (copy_id,),
+    ).fetchall()
+    return [hashlib.sha1(f"{row['event_type']}|{row['role']}|{row['body']}".encode("utf-8", errors="replace")).hexdigest() for row in rows]
+
+
+def _is_prefix(candidate: list[str], full: list[str]) -> bool:
+    return len(candidate) <= len(full) and candidate == full[: len(candidate)]
+
+
+def _family_diff_summary(conn: sqlite3.Connection, family_id: str) -> dict[str, Any]:
+    copies = conn.execute("SELECT id, event_count, divergence_status FROM session_copies WHERE family_id = ?", (family_id,)).fetchall()
+    if len(copies) <= 1:
+        return {"status": "single_copy", "copies": len(copies)}
+    signatures = {row["id"]: _event_signatures(conn, row["id"]) for row in copies}
+    common = 0
+    if signatures:
+        shortest = min(len(value) for value in signatures.values())
+        for idx in range(shortest):
+            values = {sig[idx] for sig in signatures.values()}
+            if len(values) != 1:
+                break
+            common += 1
+    return {
+        "status": "in_sync" if len({tuple(v) for v in signatures.values()}) == 1 else "diverged",
+        "copies": len(copies),
+        "common_prefix_events": common,
+        "copy_event_counts": {row["id"]: row["event_count"] for row in copies},
+    }
+
+
+def _redact_for_index(text: str) -> str:
+    import re
+
+    patterns = [
+        r"sk-[A-Za-z0-9_\-]{8,}",
+        "github" + r"_pat_[A-Za-z0-9_]+",
+        r"ghp_[A-Za-z0-9]+",
+        r"(?i)(api[_-]?key|password|token|secret)\s*[:=]\s*\S+",
+    ]
+    redacted = text
+    for pattern in patterns:
+        redacted = re.sub(pattern, "<redacted>", redacted)
+    return redacted
 
 
 def _loads(value: str | None) -> Any:
@@ -396,4 +612,3 @@ def _loads(value: str | None) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return None
-

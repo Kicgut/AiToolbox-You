@@ -16,6 +16,31 @@ DDL = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS manual_profile_roots (
+        id TEXT PRIMARY KEY,
+        tool TEXT NOT NULL,
+        config_root TEXT NOT NULL,
+        display_name TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        UNIQUE(tool, config_root)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scan_runs (
+        id TEXT PRIMARY KEY,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        status TEXT NOT NULL,
+        profiles_seen INTEGER NOT NULL DEFAULT 0,
+        profiles_indexed INTEGER NOT NULL DEFAULT 0,
+        files_seen INTEGER NOT NULL DEFAULT 0,
+        sessions_indexed INTEGER NOT NULL DEFAULT 0,
+        events_indexed INTEGER NOT NULL DEFAULT 0,
+        errors_json TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS tool_profiles (
         id TEXT PRIMARY KEY,
         tool TEXT NOT NULL,
@@ -149,6 +174,14 @@ DDL = [
     "CREATE INDEX IF NOT EXISTS idx_session_copies_tool ON session_copies(tool, profile_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_copy_id, sequence_no)",
     "CREATE INDEX IF NOT EXISTS idx_source_checkpoints_profile ON source_checkpoints(profile_id)",
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+        session_copy_id UNINDEXED,
+        event_id UNINDEXED,
+        text_content,
+        tokenize = 'unicode61'
+    )
+    """,
 ]
 
 
@@ -175,6 +208,8 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (str(SCHEMA_VERSION),),
     )
+    _ensure_column(conn, "source_checkpoints", "missing_since", "INTEGER")
+    _ensure_column(conn, "source_checkpoints", "status", "TEXT NOT NULL DEFAULT 'active'")
     conn.commit()
     return conn
 
@@ -182,3 +217,8 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    if column not in columns:
+        conn.execute(f'ALTER TABLE "{table}" ADD COLUMN {column} {definition}')
