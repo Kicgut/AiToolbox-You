@@ -24,7 +24,7 @@ proxy-traffic-monitor/tests/ai_workbench/phase0/
 
 The module is isolated from the current proxy traffic monitor APIs. It may define adapter contracts, read-only probes, fixtures, normalized events, and process-supervision prototypes. It must not be wired into user-facing routes until a later approved phase.
 
-The first supported implementation target is Windows, matching the current development host and the main use case for local Codex CLI and Claude Code automation. Phase 0 code avoids Windows-only APIs where practical so Linux server support remains feasible in later phases.
+The first formally supported and tested platform is Windows, matching the current development host and the main use case for local Codex CLI and Claude Code automation. The design avoids unnecessary Windows-only APIs where practical, but this does not constitute any commitment to Linux compatibility, testing, or maintenance. Linux support requires separate approval and a dedicated test matrix. (2026-07-23, see architecture document §19 decision record.)
 
 Workbench-owned runtime data will use a dedicated application data directory derived from `platformdirs` or an equivalent standard rule in Phase 1. It must not be placed under `~/.codex`, `~/.claude`, `~/.cc-switch`, or `~/.antigravity_cockpit`.
 

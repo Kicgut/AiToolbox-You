@@ -41,3 +41,7 @@
 • Codex API 服务账号同样适用，不会改为消耗 OAuth 账号的对话额度
 
 建议优先选择 Plus、Team 或更高套餐的 OAuth 账号进行绑定，以获得更完整、稳定的客户端功能和模型显示体验。
+
+## 公告3
+
+支持将 Web Session 自动注册为 Agent Identity：确认导入后会自动加入 Codex API 服务账号池，并支持跨设备导出与导入；此类账号仅限 API 服务使用，不支持普通切号、客户端或 CLI 启动及 OAuth 绑定

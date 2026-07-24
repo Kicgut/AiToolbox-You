@@ -4,6 +4,8 @@
 
 这些文件把 `docs/ai-coding-workbench-architecture.md` 拆成可逐阶段审查、批准、实施和验收的任务。任何 Phase 都不会因为前一阶段完成而自动开始。
 
+实施或审核任何任务前，先读 `docs/verification-and-boundaries.md`：它是规则的验证层（不是规则正文），提供每条边界规则对应的自动化测试设计和人工/AI 自查清单，以及第 6 节的任务自审模板。
+
 状态值：
 
 - `待审查`：方案已写，等待用户逐项审查。
@@ -19,8 +21,8 @@
 | Phase | 文件 | 目标 | 当前状态 | 进入条件 |
 |---:|---|---|---|---|
 | 0 | `00-technical-foundation.md` | 技术 Spike、协议和兼容基线 | 已完成 | 架构讨论稿可用 |
-| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 待验收 | Phase 0 已完成 |
-| 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 待审查 | Phase 1 已完成 |
+| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 修订中 | Phase 0 已完成 |
+| 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 待审查 | Phase 1 已完成（含 P1-13 前端基础整理门禁） |
 | 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 待审查 | Phase 2 已完成 |
 | 4 | `04-automation-scheduler.md` | 多 Step 定时任务和恢复 | 待审查 | Phase 3 已完成 |
 | 5 | `05-cross-profile-migration.md` | 跨 profile 复制、分叉与回滚 | 待审查 | Phase 1、3、4 已稳定 |
@@ -31,7 +33,7 @@
 2. 确认目标、非目标、任务、数据变更、测试矩阵、风险和退出标准。
 3. 将修改意见写入该 Phase 的“审查记录”。
 4. 用户明确说“批准 Phase N”后，才把状态改为 `已批准`。
-5. 实施期间逐项勾选任务，并把命令、测试结果、截图或数据对比写入“执行证据”。
+5. 实施期间逐项勾选任务，对照 `docs/verification-and-boundaries.md` 对应章节选择适用的自动化测试和人工检查，并把命令、测试结果、截图、数据对比和第 6 节自审模板填写结果写入“执行证据”。
 6. 达到退出标准后改为 `待验收` 并停止。
 7. 用户验收后改为 `已完成`，再审查下一 Phase。
 
@@ -54,12 +56,12 @@
 - 自动化测试通过。
 - 手工验收场景完成。
 - 没有未说明的第三方文件写入。
-- 文档、project context 和接口契约已同步。
+- 文档（架构决策表、`CONTEXT.md` 术语）和接口契约已同步。
 - 已记录已知限制和回滚方式。
 
 ## 计划变更规则
 
 - 架构改变时，先更新架构文档，再更新受影响 Phase。
 - 不把后续 Phase 的功能偷偷并入当前 Phase。
-- 新增阶段时更新本索引、依赖关系和 `docs/project-context.md`。
+- 新增阶段时更新本索引、依赖关系和 `docs/ai-coding-workbench-architecture.md`；涉及新术语时同步更新 `CONTEXT.md`。
 - 任务编号一旦用于执行证据，不复用给不同含义的任务。

@@ -3,7 +3,8 @@
 > 状态：已完成  
 > 依赖：`docs/ai-coding-workbench-architecture.md`  
 > 允许真实模型请求：否  
-> 允许修改第三方数据：否
+> 允许修改第三方数据：否  
+> 验证映射：`docs/verification-and-boundaries.md` §3.1（流程/Git/外部软件）、§3.4 EVT-02/EVT-05（事件降级与 fixture）、§3.5 RUN-01/02（进程执行）
 
 ## 目标
 
@@ -105,7 +106,7 @@ proxy-traffic-monitor/app/ai_workbench/
 
 ### P0-09：Spike 决策归档
 
-- [x] 将验证事实更新到架构和 project context。
+- [x] 将验证事实更新到架构文档（2026-07-23 起，长期上下文改为分流治理，不再有单独的 project context 文件，见架构文档 §19 2026-07-23 决策）。
 - [x] 更新 Phase 1–4 的接口假设。
 - [x] 记录未解决问题和放弃的方案。
 

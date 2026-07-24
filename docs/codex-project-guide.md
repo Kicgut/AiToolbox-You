@@ -16,11 +16,17 @@ AGENTS.md
 .agents/skills/ai-coding-workbench/
   └─ 规划、审查、实现工作台时使用的可复用工作流
 
-docs/project-context.md
-  └─ 人工维护、可审查、随项目保存的长期事实和决策；不是 Codex Memory
+CONTEXT.md
+  └─ 人工维护的领域术语表：规范名称和简短定义，不含实现细节或决策理由
+
+docs/ai-coding-workbench-architecture.md
+  └─ 架构方案与决策记录表；已确认决策和已验证事实的权威来源
+
+docs/adr/
+  └─ 难以逆转、反直觉、存在真实权衡的重大架构决策
 
 plans/ai-coding-workbench/
-  └─ 分阶段任务、验收门槛和执行证据
+  └─ 分阶段任务、验收门槛、当前状态和执行证据
 
 ~/.codex/memories/
   └─ Codex 自动生成的个人本地记忆，不属于仓库事实源
@@ -58,7 +64,9 @@ memories = true
 
 这里的 `memories = true` 只是在受信任项目中启用本机 Memory 功能，不会创建项目隔离的 Memory 仓库；生成内容仍写入当前 Codex host 的 `CODEX_HOME/memories/`。是否让某个会话读取或贡献本地 Memory，仍由用户通过 `/memories` 控制。
 
-`workspace-write + never` 不是“完全权限”：它表示不弹审批并限定在允许的工作区写入范围内。不要用 `danger-full-access` 或 `--dangerously-bypass-approvals-and-sandbox` 解决普通开发问题。
+`workspace-write + never` 不是”完全权限”：它表示不弹审批并限定在允许的工作区写入范围内。不要用 `danger-full-access` 或 `--dangerously-bypass-approvals-and-sandbox` 解决普通开发问题。
+
+注意术语消歧：Codex 自己的 `--profile`/`~/.codex/<name>.config.toml`（同一 `CODEX_HOME` 内切换 model/审批策略等配置）与本项目 Workbench 的 Profile（`tool_profiles` 表，指配置根目录+会话根目录组合）是不同概念，互不替代，详见根 `CONTEXT.md` Profile 词条。
 
 ## Repo skill
 
@@ -100,18 +108,23 @@ Codex CLI 的本地 memories 默认关闭；启用后由 Codex 在后台从符�
 
 ### 项目长期上下文
 
-`docs/project-context.md` 是人工维护的项目长期记录，解决自动 Memory 不可审查、不可随项目部署的问题。它不是 Codex Memory，也不应移动到 `.codex/memories/`。只写入：
+项目不使用单一的“project context”文件，而是按内容类型分流到人工维护、可审查、随项目部署的几份文档，解决自动 Memory 不可审查、不可随项目部署的问题。这些都不是 Codex Memory，也不应移动到 `.codex/memories/`：
 
-- 已验证的环境和协议事实。
-- 用户明确确认的架构决策。
-- 当前阶段及完成状态。
-- 仍待确认且会影响方案的关键问题。
+| 内容类型 | 写入位置 |
+|---|---|
+| 跨代码/UI/文档反复使用的规范术语 | `CONTEXT.md`（只含定义，不含实现细节或决策理由） |
+| 用户明确确认的架构决策 | `docs/ai-coding-workbench-architecture.md` 决策记录表 |
+| 难以逆转、反直觉、存在真实权衡的重大决策 | `docs/adr/`（同时满足三条件才新建） |
+| 已验证的环境和协议事实 | `docs/ai-coding-workbench-architecture.md` 对应技术验证章节，或触发该验证的 Phase 文件执行证据 |
+| 当前阶段及完成状态 | `plans/ai-coding-workbench/README.md`（索引）和对应 Phase 文件 |
+| 仍待确认且会影响方案的关键问题 | `docs/ai-coding-workbench-architecture.md` §18 当前待讨论问题，或对应 Phase 文件 |
+| 临时研究、未确认假设、带日期的环境快照 | `notes/` |
 
-不要写入：
+不要写入以上任何文档：
 
 - API Key、账号 token、Cookie 或凭据路径内容。
 - 临时调试输出。
-- 未验证猜测。
+- 未验证猜测（放 `notes/`）。
 - 详细任务列表；任务属于 `plans/`。
 
 ## 文档更新协议
@@ -119,7 +132,7 @@ Codex CLI 的本地 memories 默认关闭；启用后由 Codex 在后台从符�
 当用户提出架构建议时：
 
 1. 更新 `docs/ai-coding-workbench-architecture.md`。
-2. 将已确认的持久结论同步到 `docs/project-context.md`。
+2. 按上表内容类型分流：新术语写入 `CONTEXT.md`，重大权衡按三条件评估是否新建 ADR。
 3. 更新受影响的 Phase 计划和依赖。
 4. 在架构决策记录中保留日期和状态。
 5. 不因为文档确认自动开始实施。

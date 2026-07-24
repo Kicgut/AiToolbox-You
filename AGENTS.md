@@ -3,7 +3,7 @@
 ## Scope and source of truth
 
 - Treat `docs/ai-coding-workbench-architecture.md` as the architecture source of truth for the AI coding workbench.
-- Read `docs/project-context.md` before changing architecture, plans, adapters, session storage, statistics, execution, scheduling, or third-party integration.
+- Read `CONTEXT.md` for domain terminology, `docs/ai-coding-workbench-architecture.md` (including its decision table) for confirmed decisions, and the active phase file in `plans/ai-coding-workbench/` for current status before changing architecture, plans, adapters, session storage, statistics, execution, scheduling, or third-party integration.
 - Read `plans/ai-coding-workbench/README.md` and only the active phase file before implementing workbench code.
 - Use the repo skill `$ai-coding-workbench` for architecture revisions, phase reviews, and phase implementation.
 - The workspace root is not currently a Git repository. Do not assume Git operations are available; discover the actual code root before using Git.
@@ -64,5 +64,5 @@ Add phase-specific commands to the active plan when new frontend or workbench mo
 ## Documentation maintenance
 
 - Keep `AGENTS.md` short and durable. Put detailed architecture in `docs/` and executable task breakdowns in `plans/`.
-- Put only verified facts and confirmed decisions in `docs/project-context.md`; keep hypotheses and temporary research in `notes/`.
-- When a decision changes, update the architecture decision record, project context, and affected plans in the same change.
+- Put domain terminology in `CONTEXT.md` only (definitions, no implementation detail or rationale). Put confirmed architecture decisions in the `docs/ai-coding-workbench-architecture.md` decision table, or in `docs/adr/` when a decision is hard to reverse, surprising, and the result of a real trade-off. Keep hypotheses and temporary research in `notes/`.
+- When a decision changes, update the architecture decision record and affected plans in the same change.

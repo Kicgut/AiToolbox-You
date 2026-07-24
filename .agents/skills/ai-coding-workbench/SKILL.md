@@ -10,14 +10,14 @@ Follow the repository's approved architecture and phase gates. Keep design decis
 ## Load context
 
 1. Read the nearest `AGENTS.md`.
-2. Read `docs/project-context.md` for confirmed decisions and current status.
+2. Read `CONTEXT.md` for domain terminology and `docs/ai-coding-workbench-architecture.md` (decision table) for confirmed decisions; check the active phase file in `plans/ai-coding-workbench/` for current status.
 3. Read `docs/ai-coding-workbench-architecture.md` when the task affects architecture, data contracts, security, interoperability, or UI structure.
 4. Read `plans/ai-coding-workbench/README.md`, then the one phase file relevant to the request. Do not load every phase unless comparing dependencies or changing the roadmap.
 5. Inspect the existing implementation and tests before proposing file-level changes.
 
 ## Classify the request
 
-- For architecture feedback, update the architecture document, project context, affected phase plans, and decision records. Do not implement product code.
+- For architecture feedback, update the architecture document (including its decision table, and `CONTEXT.md` when terminology changes) and affected phase plans. Do not implement product code.
 - For a phase review, inspect its dependencies, tasks, risks, tests, and exit criteria. Record requested revisions without marking the phase approved unless the user explicitly approves it.
 - For implementation, require the phase status to be `已批准`. Work only on that phase and update task checkboxes and evidence as work completes.
 - For diagnosis or research, perform read-only checks first and record verified facts separately from assumptions.
@@ -46,7 +46,7 @@ Follow the repository's approved architecture and phase gates. Keep design decis
 1. Run the checks required by the active phase file.
 2. Confirm no unapproved external database, session, account, or configuration file changed.
 3. Record verification commands and results in the phase evidence section.
-4. Update `docs/project-context.md` only with durable, verified information or explicitly confirmed decisions.
+4. Update `CONTEXT.md` only when a term needs to be added or sharpened. Record confirmed decisions in the architecture decision table (or `docs/adr/`) and durable verified facts in the architecture document or the active phase file's evidence section.
 5. Update the architecture decision table when a design choice changes.
 6. Review staged content for credentials and machine-local data, then commit and push the coherent verified change to `origin/main` using only repository-local Kicgut configuration. Do not change global Git/GitHub account settings and never force-push.
 7. Stop at the phase exit gate and request review instead of beginning the next phase automatically.
