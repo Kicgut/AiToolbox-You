@@ -2,7 +2,7 @@
 
 Date: 2026-07-22
 
-Status: Accepted for Phase 0 implementation
+Status: Superseded by `docs/adr/0002-workbench-root-and-feature-module-layout.md` (2026-07-24) for the placement decision below. The rest of this ADR (data directory rules, git repo root, etc.) remains historical record of the Phase 0 decision and is not retroactively rewritten.
 
 ## Context
 
