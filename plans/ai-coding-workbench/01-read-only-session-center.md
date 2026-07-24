@@ -52,13 +52,14 @@
 - [x] 实现 watcher + periodic reconcile。
 - [x] 保存 file identity、size、mtime、offset、content hash 和 parser version。
 - [x] 只提交完整换行事件，容忍正在写入的尾行。
-- [x] 处理文件替换、缩短、移动、归档和暂时占用（全量扫描通过整文件重建正确处理；`changed_only`/reconcile 模式目前只判断 size/mtime，未覆盖 hash-only 变化，测试缺口见 `docs/verification-and-boundaries.md` IO-06，不影响全量扫描正确性）。
+- [x] 处理文件替换、缩短、移动、归档和暂时占用（全量扫描通过整文件重建正确处理这些场景）。
 - [x] 加入每 profile 扫描限速、取消和进度事件。
 - [ ]（2026-07-24 重开）实现真正的按 byte offset 增量读取：从 `source_checkpoints.parsed_offset` 续读新增内容，不整文件 `read_text()` 重读、不 `DELETE FROM events` 后全量重插。当前 `scanner.py::_index_transcript` 每次都是全量重读重建，与架构 §5.3"只在换行完成后提交新事件"的增量语义不符，虽然功能结果目前正确，但性能和并发安全属性不达标。
 - [ ]（2026-07-24 重开）读取前后二次 stat 复核：`_index_transcript` 目前只在读取前 `stat()` 一次，读取后不比较文件长度和 mtime 是否发生变化；架构 §5.3 明确要求"读取前后比较文件长度和 mtime；变化时重新验证尾部"。
 - [ ]（2026-07-24 重开）对暂时被占用的文件实现指数退避，不标记为损坏：当前 `scan_sessions` 捕获 `OSError` 后直接记录错误继续，`watcher.py::run_forever` 只有固定 15 秒轮询间隔，没有单文件级别的指数退避状态机。
+- [ ]（2026-07-24 新增，实现缺口非仅测试缺口）`changed_only`/reconcile 模式的内容哈希判断缺失：`scanner.py::_needs_reindex`（第 539–547 行）只比较 `file_size`、`mtime_ns`、`parser_version`，不比较内容哈希。若文件内容被替换但 size 和 mtime 恰好不变（例如某些同步/备份工具的行为），reconcile 会直接跳过该文件，数据库保留过期内容，不符合架构 §5.3"哈希不匹配时重新解析"的要求。需要在 `_needs_reindex` 中补充内容哈希比较（或至少在哈希未知时保守触发重索引），并覆盖 hash-only replacement、file identity 变化场景。
 
-验收：本节新增三项按架构 §5.3 逐条验证，见 `docs/verification-and-boundaries.md` IO-03/IO-04/IO-05/IO-06。
+验收：本节新增四项按架构 §5.3 逐条验证，见 `docs/verification-and-boundaries.md` IO-03/IO-04/IO-05/IO-06。
 
 ### P1-04：Codex 解析器
 
@@ -195,6 +196,10 @@
 
 背景：架构复审（§13.7）确认 `frontend/src/main.ts` 是单文件模板字符串实现，缺少 `.vue` SFC 和 `views/components/stores/router` 拆分。2026-07-23 决定：不并入 P1-12，也不作为 Phase 2 内部任务，而是 P1-12 验收后单独设立的门禁——完成本任务前不批准 Phase 2。
 
+进入条件：P1-12 完成并通过对应路由验收。
+
+实施顺序（2026-07-24 确认）：P1-13 的行为回归清单包含 FTS consent 相关项（见下方回归清单），但 consent 状态模型要到 P1-14 才实现。因此实际执行顺序为 **P1-12 → P1-14 → P1-13**，P1-13 作为包含最终 FTS consent 行为的最后一道全量回归门禁执行，而不是按任务编号顺序执行。若确有理由必须先做 P1-13 再做 P1-14，则 P1-14 完成后必须重新跑一遍 P1-13 的完整 17 项回归清单和严格构建比较，不能只增量验证新增部分。
+
 范围严格限定为结构迁移，不改变现有业务行为：
 
 - [ ] 把 `main.ts` 拆分为入口、`router/`、`views/`、`components/`、`stores/` 和类型/API 模块。
@@ -277,7 +282,7 @@ FTS consent 保存在 Workbench 自有 SQLite，新增单例表 `fts_settings`�
 
 全新数据库初始化：`consent_state = recommended_pending`、`indexing_enabled = 0`，UI 显示"建议开启"但在明确接受前不得写入 FTS，不自动 rebuild。
 
-"全新数据库"只能在迁移前根据数据库文件和旧 schema 判断——字段不存在不能直接等同于新实例，因为旧数据库升级时同样没有该字段。
+"全新数据库"判定规则（穷举，2026-07-24 补全）：数据库文件不存在，或数据库文件存在但既没有 `schema_meta` 表也没有任何旧业务表（`tool_profiles`/`session_copies`/`events_fts` 等）——两种情况都归类为全新实例，初始化为 `recommended_pending`。除此之外的情况（存在 `schema_meta` 或任一旧业务表）一律归类为已有安装升级，走下方 v1→v2 迁移规则。字段不存在不能直接等同于新实例，因为旧数据库升级时同样没有该字段；必须先判断数据库文件本身是否是全新创建的，再决定迁移路径。
 
 schema v1 升级到 v2：迁移前先读取旧 `schema_version` 和 `events_fts` 行数；旧 FTS 有行则 `legacy_preserved`、`indexing_enabled = 1`；旧 FTS 无行则 `legacy_preserved`、`indexing_enabled = 0`；两种情况都不改变旧 FTS 内容、不自动 rebuild、不自动 clear、不重新弹首次提示。当前旧实现没有持久化开关，只能通过升级前 FTS 行数保留可观察到的有效行为，该限制须写入迁移说明和执行证据。
 
@@ -335,6 +340,7 @@ P1-12/P1-13/P1-14 新增测试矩阵（2026-07-24）：
 | 清空已有索引 | 任意状态 | 索引行清零，consent/enabled 不变 |
 | v1 有索引升级 | 旧 FTS 有行 | legacy_preserved、enabled=1、不重新提示 |
 | v1 无索引升级 | 旧 FTS 无行 | legacy_preserved、enabled=0、不重新提示 |
+| notice 版本升级 | 已接受旧 `notice_version`，当前版本提高 | 再启用/继续使用前要求重新确认新版本说明，不得沿用旧版本的接受记录 |
 
 ## 退出标准
 
@@ -364,6 +370,7 @@ P1-12/P1-13/P1-14 新增测试矩阵（2026-07-24）：
 - 2026-07-23：确认前端结构重构的时间点——不并入 P1-12，也不作为 Phase 2 内部任务，新增 P1-13 作为 P1-12 验收后、Phase 2 批准前的独立门禁，范围限定为结构迁移且不改变现有业务行为。同批确认 Windows/Linux 支持范围（Windows 正式支持并验收，Linux 设计上可迁移但不作兼容承诺），已同步到架构文档 §10.3/§7.2/§6.3/§11.4/§18/§19、`docs/adr/0001-ai-workbench-placement.md` 和 `plans/ai-coding-workbench/03-interactive-runtime.md` P3-06。
 - 2026-07-23：确认全文索引默认值调整方案（新实例默认建议开启、首次提示可拒绝、已有安装不自动改变），新增 P1-14，已同步到架构文档 §19 决策记录。§18 待讨论问题至此全部解决。
 - 2026-07-24：经 Codex 分析确认 P1-12/13/14 此前只有结果性描述，缺少可直接实施的具体契约，不足以支撑“批准 Phase 1”。已补齐 P1-12 的受约束 SPA fallback 路由契约、P1-13 的构建一致性检查命令与行为回归清单、P1-14 的 FTS consent 状态模型和 API 契约；同步修正“风险与回滚”中与 P1-14 新决策矛盾的旧表述（原写“全文索引默认关闭”）；测试矩阵补充 20 项 P1-12/13/14 场景。Phase 1 状态仍为 `修订中`，本轮只补充设计细节，未获批准、未开始实施。
+- 2026-07-24：经 Codex 复核纠正一处判断——`scanner.py::_needs_reindex` 只比较 size/mtime/parser_version、不比较内容哈希，在 `changed_only`/reconcile 模式下属于真实功能缺口（不只是测试覆盖缺口），已改为 P1-03 下新增的未勾选子项。同时补全 P1-14"新实例"判定规则为穷举条件（数据库文件不存在，或存在但无 `schema_meta` 与任何旧业务表）；在 P1-13 标题下加入进入条件（P1-12 完成）和实际实施顺序说明（P1-12 → P1-14 → P1-13，因 P1-13 回归清单包含 P1-14 才实现的 FTS consent 项）；测试矩阵补充 notice 版本升级重新确认场景。Phase 1 状态仍为 `修订中`。
 
 ## 执行证据
 
