@@ -44,9 +44,14 @@
 - Add fixture-based tests for every supported external schema and version branch.
 - Attribute copied upstream code with repository, source URL, commit, license, and changes; add `THIRD_PARTY_NOTICES.md` when copying begins.
 
+## Repository layout
+
+- This repository's root is the AI Coding Workbench's own engineering root (`app/`, `frontend/`, `tests/`); the repo itself is the primary product, not a container for peer products. See `docs/adr/0002-workbench-root-and-feature-module-layout.md`.
+- Auxiliary features (small, focused, secondary tools such as `features/proxy-traffic-monitor/`) live under `features/<slug>/` and are mounted into the primary app via an explicit `mount()`/`lifespan()` interface — never merged into `app/ai_workbench`.
+
 ## Current verification commands
 
-Run from `proxy-traffic-monitor/` when changing the existing Python service:
+Run from the repository root when changing the existing Python service:
 
 ```powershell
 python -m pytest

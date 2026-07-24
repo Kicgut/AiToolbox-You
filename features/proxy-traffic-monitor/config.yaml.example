@@ -4,7 +4,7 @@ clash_api:
 server:
   listen_port: 8899
 storage:
-  db_path: "./data/traffic.db"
+  db_path: "./features/proxy-traffic-monitor/data/traffic.db"
   retention_days: 30
 collector:
   minute_flush_interval_sec: 60

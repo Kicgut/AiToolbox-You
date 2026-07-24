@@ -20,7 +20,7 @@ class ServerConfig:
 
 @dataclass
 class StorageConfig:
-    db_path: str = "./data/traffic.db"
+    db_path: str = "./features/proxy-traffic-monitor/data/traffic.db"
     retention_days: int = 30
 
 
@@ -43,7 +43,7 @@ class Config:
 logger = logging.getLogger(__name__)
 
 
-def load_config(path: str = "config.yaml") -> Config:
+def load_config(path: str = "features/proxy-traffic-monitor/config.yaml") -> Config:
     data: dict = {}
     try:
         with open(path, "r", encoding="utf-8") as f:

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-from app import repository
+from proxy_traffic_monitor import repository
 
 
 def _parse_start_ts(raw, now: float) -> int:

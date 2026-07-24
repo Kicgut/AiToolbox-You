@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from app.collector import Collector, ConnState, LiveConn
+from proxy_traffic_monitor.collector import Collector, ConnState, LiveConn
 
 
 class DummyConfig:

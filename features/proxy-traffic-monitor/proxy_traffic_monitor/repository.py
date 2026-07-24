@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import aiosqlite
-from app.db import write_lock
+from proxy_traffic_monitor.db import write_lock
 
 
 async def upsert_minute_stats(db: aiosqlite.Connection, agg: Dict[Tuple[int, str, str], List[int]]) -> None:

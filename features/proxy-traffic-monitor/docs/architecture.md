@@ -27,53 +27,54 @@ Proxy Traffic Monitor 是一个本地代理流量监控面板，用于实时统�
 | 原生 ESM | `<script type="module">` | 模块化加载，无需打包工具 |
 | CSS Variables | 主题系统 | 亮色/深色模式切换 |
 
-**设计约束**：双击 `run.bat` 即用，不依赖 Node.js、不使用 Vite/Webpack 等构建工具。
+**设计约束**：不依赖 Node.js、不使用 Vite/Webpack 等构建工具；作为辅助功能挂载进仓库根的主应用（AI Coding Workbench），随主应用一起用根目录的 `run.bat` 一键启动，不再独立运行。
+
+2026-07-24 起，本功能已从仓库根 `proxy-traffic-monitor/` 迁移到 `features/proxy-traffic-monitor/`，以"进程内模块"方式挂载进主应用，见 `docs/adr/0002-workbench-root-and-feature-module-layout.md`。原来独立的 `app/main.py`/`run.bat`/`requirements.txt` 已废弃，主应用的依赖清单（根目录 `requirements.txt`）已包含本功能所需的 `websockets`/`aiosqlite`/`pyyaml`。
 
 ## 项目结构
 
 ```
-proxy-traffic-monitor/
-├── app/                          # 后端应用
-│   ├── __init__.py
-│   ├── main.py                   # FastAPI 入口，lifespan 管理
+features/proxy-traffic-monitor/
+├── proxy_traffic_monitor/        # 后端模块（挂载进主应用，不再有自己的 main.py）
+│   ├── __init__.py               # mount(app)/lifespan(app) 公开接口
 │   ├── config.py                 # 配置加载（YAML → dataclass）
 │   ├── clash_client.py           # Clash API WebSocket 客户端
 │   ├── collector.py              # 数据采集核心逻辑
 │   ├── db.py                     # SQLite 初始化 + DDL
 │   ├── repository.py             # 数据库 CRUD 操作
-│   ├── api/                      # API 路由层
-│   │   ├── __init__.py
-│   │   ├── live.py               # WebSocket 实时推送
-│   │   ├── stats.py              # 统计查询 API
-│   │   └── status.py             # 连接状态 API
-│   └── static/                   # 前端静态资源
-│       ├── index.html            # 入口页面
-│       ├── main.js               # Vue 应用入口
-│       ├── App.js                # Vue 根组件
-│       ├── style.css             # 全局样式（含深色模式）
-│       ├── components/           # Vue 组件
-│       │   ├── StatusBar.js      # 状态栏 + KPI 卡片
-│       │   ├── LiveTable.js      # 实时连接表格
-│       │   ├── TrafficChart.js   # 流量趋势图表
-│       │   └── TopTable.js       # Top 排行表格
-│       ├── utils/                # 前端工具函数
-│       │   ├── format.js         # 字节/速度/时间格式化
-│       │   └── labels.js         # 中文字段映射
-│       └── vendor/               # 第三方库（本地）
-│           ├── chart.min.js      # Chart.js
-│           └── vue.esm-browser.prod.js  # Vue 3 ESM
+│   └── routes/                   # API 路由层
+│       ├── __init__.py
+│       ├── live.py               # WebSocket 实时推送
+│       ├── stats.py              # 统计查询 API
+│       └── status.py             # 连接状态 API
+├── static/                       # 前端静态资源（挂载在 /features/proxy-traffic-monitor/static）
+│   ├── index.html                # 入口页面（当前挂载在主应用的 `/`，见下方说明）
+│   ├── main.js                   # Vue 应用入口
+│   ├── App.js                    # Vue 根组件
+│   ├── style.css                 # 全局样式（含深色模式）
+│   ├── components/                # Vue 组件
+│   │   ├── StatusBar.js          # 状态栏 + KPI 卡片
+│   │   ├── LiveTable.js          # 实时连接表格
+│   │   ├── TrafficChart.js       # 流量趋势图表
+│   │   └── TopTable.js           # Top 排行表格
+│   ├── utils/                    # 前端工具函数
+│   │   ├── format.js             # 字节/速度/时间格式化
+│   │   └── labels.js             # 中文字段映射
+│   └── vendor/                   # 第三方库（本地）
+│       ├── chart.min.js          # Chart.js
+│       └── vue.esm-browser.prod.js  # Vue 3 ESM
 ├── tests/                        # 测试
-│   ├── conftest.py               # 路径配置
+│   ├── conftest.py               # 路径配置（把本目录加入 sys.path）
 │   └── test_collector.py         # 采集器单元测试
 ├── data/                         # 数据目录
 │   └── traffic.db                # SQLite 数据库（gitignore）
 ├── config.yaml                   # 运行时配置（gitignore）
 ├── config.yaml.example           # 配置示例
-├── requirements.txt              # 生产依赖
-├── requirements-dev.txt          # 开发依赖（pytest）
-├── run.bat                       # 一键启动脚本
-└── .gitignore
+├── docs/architecture.md          # 本文档
+└── README.md
 ```
+
+主应用如何挂载本功能：仓库根 `app/main.py` 在启动时把 `features/proxy-traffic-monitor/` 加入 `sys.path`，导入 `proxy_traffic_monitor` 包，调用 `proxy_traffic_monitor.mount(app)` 注册路由和静态资源，并在主应用的 `lifespan` 里用 `async with proxy_traffic_monitor.lifespan(app):` 包裹，让 Collector 的后台采集任务随主进程生命周期启停。
 
 ## 后端架构
 
@@ -81,9 +82,9 @@ proxy-traffic-monitor/
 
 ```
 ┌─────────────────────────────────────────────┐
-│                   main.py                   │  入口 + 生命周期
+│    __init__.py (mount/lifespan 接口)         │  被主应用显式注册
 ├─────────────────────────────────────────────┤
-│         API 层 (api/*.py)                   │  路由 + 参数校验
+│         API 层 (routes/*.py)                 │  路由 + 参数校验
 ├─────────────────────────────────────────────┤
 │       Collector (collector.py)              │  数据采集 + 聚合
 ├─────────────────────────────────────────────┤
@@ -97,11 +98,10 @@ proxy-traffic-monitor/
 
 ### 核心模块说明
 
-#### `main.py` — 应用入口
-- 使用 FastAPI `lifespan` 管理启动/关闭
-- 启动时：加载配置 → 初始化数据库 → 创建 Clash 客户端 → 启动采集器
-- 关闭时：停止采集器 → 关闭数据库连接
-- 挂载静态文件目录，注册 API 路由
+#### `__init__.py` — 挂载接口
+- 不再是独立的 FastAPI 应用入口；暴露 `mount(app)` 和 `lifespan(app)` 两个函数供主应用（仓库根 `app/main.py`）显式调用。
+- `mount(app)`：挂载静态文件目录（`/features/proxy-traffic-monitor/static`）、注册 API 路由、注册 `/` 路由返回入口页面。
+- `lifespan(app)`：异步上下文管理器，启动时加载配置 → 初始化数据库 → 创建 Clash 客户端 → 启动采集器；退出时停止采集器 → 关闭数据库连接。主应用的 lifespan 用 `async with proxy_traffic_monitor.lifespan(app):` 包裹自己的逻辑来组合。
 
 #### `config.py` — 配置管理
 - 从 `config.yaml` 加载配置，支持默认值
@@ -159,6 +159,8 @@ proxy-traffic-monitor/
 | GET | `/api/top` | Top 排行（支持多维度） |
 | GET | `/api/apps` | 已知应用列表 |
 | GET | `/api/export` | CSV 导出 |
+
+以上路径由 `mount(app)` 注册进主应用，与迁移前完全一致（结构迁移不改变路由语义）。`/` 会在 Phase 1 的 P1-12 任务实施后改为 `/traffic`（届时 `/` 交给 workbench SPA 总览页），这是单独批准的 Phase 1 工作，不随本次结构迁移变化。
 
 ### 数据库表结构
 
@@ -286,7 +288,7 @@ Clash API (WebSocket)
 
 ## 配置说明
 
-`config.yaml` 示例：
+配置文件位于本功能目录下（`features/proxy-traffic-monitor/config.yaml`，由 `load_config()` 默认读取），路径相对于主应用进程的工作目录（仓库根）解析：
 
 ```yaml
 clash_api:
@@ -294,10 +296,10 @@ clash_api:
   secret: ""                     # API 密钥（可选）
 
 server:
-  listen_port: 8899              # Web 服务端口
+  listen_port: 8899              # Web 服务端口（仅文档用途；实际监听端口由主应用 uvicorn 启动参数决定）
 
 storage:
-  db_path: "./data/traffic.db"   # 数据库路径
+  db_path: "./features/proxy-traffic-monitor/data/traffic.db"   # 数据库路径
   retention_days: 30             # 数据保留天数
 
 collector:
@@ -309,14 +311,16 @@ collector:
 
 ## 启动方式
 
+本功能不再独立启动，随主应用（仓库根 `app/main.py`）一起运行：
+
 ### Windows
 ```batch
-双击 run.bat
+双击仓库根目录的 run.bat
 ```
 
 ### 命令行
 ```bash
-cd proxy-traffic-monitor
+cd E:\statistics-toolbox-You
 python -m app.main
 ```
 
@@ -325,20 +329,20 @@ python -m app.main
 ## 开发指南
 
 ### 环境准备
+在仓库根目录（不是本功能目录）安装依赖，本功能所需的 `websockets`/`aiosqlite`/`pyyaml` 已合并进根 `requirements.txt`：
 ```bash
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # 测试依赖
+uv venv .venv --python 3.12
+uv pip install -r requirements.txt -r requirements-dev.txt --python .venv
 ```
 
 ### 运行测试
+在仓库根目录运行；也可只运行本功能自己的测试：
 ```bash
-pytest
+python -m pytest features/proxy-traffic-monitor/tests -q
 ```
 
 ### 前端开发
-- 前端文件位于 `app/static/`
+- 前端文件位于 `features/proxy-traffic-monitor/static/`，挂载在 `/features/proxy-traffic-monitor/static/`
 - 修改后刷新浏览器即可（无需构建）
 - Vue 组件使用 ESM 模块，浏览器原生支持
 

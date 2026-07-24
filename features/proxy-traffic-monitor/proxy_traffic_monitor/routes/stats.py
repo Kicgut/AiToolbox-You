@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from app import repository
+from proxy_traffic_monitor import repository
 
 router = APIRouter()
 

@@ -103,7 +103,7 @@ provider_type, is_streaming, created_at, data_source
 
 本项目只读探测 CC Switch 版本和 schema，不负责升级、降级、重装、修复或调用其 updater。若版本差异影响兼容性，先向用户报告并建议用户通过 CC Switch 自身界面执行完整软件更新；用户更新完成后再重新探测。本规则同样适用于 Cockpit Tools、Codex CLI、Claude Code 和其他外部软件。连接器仍必须支持未安装、旧版本、当前版本和未知未来版本。
 
-因此本架构中的“升级”是升级本项目自己的 connector、parser、fixture 和归一化模型，使其兼容 CC Switch v10/v16；不是迁移 CC Switch 数据库。现有 `proxy-traffic-monitor/data/traffic.db` 经只读检查为 `PRAGMA user_version = 0`，新的 Workbench 自有数据库尚未建立，将从 Phase 1 开始使用独立的 schema version。
+因此本架构中的“升级”是升级本项目自己的 connector、parser、fixture 和归一化模型，使其兼容 CC Switch v10/v16；不是迁移 CC Switch 数据库。现有代理流量监控数据库（`features/proxy-traffic-monitor/data/traffic.db`，2026-07-24 起随仓库结构迁移调整路径，历史上曾位于 `proxy-traffic-monitor/data/traffic.db`）经只读检查为 `PRAGMA user_version = 0`，新的 Workbench 自有数据库尚未建立，将从 Phase 1 开始使用独立的 schema version。
 
 ### 2.4 Cockpit Tools 本机状态
 
@@ -1058,4 +1058,4 @@ Changes: <本项目修改摘要>
 | 2026-07-23 | 模型价格表不由项目维护内置权威数据，只实现可插拔 pricing source：价格来自用户导入/配置的本地 snapshot，每条估算附带来源、生效时间、更新时间和币种，无价格源时显示不可用；见 `plans/ai-coding-workbench/02-statistics-center.md` P2-06 | 已确认 |
 | 2026-07-23 | CC Switch 的 `model_pricing` 表可作为 pricing source 的候选来源（方案 C）：只读探测但默认不启用，用户显式信任后才生效；只产生 API-equivalent estimate，不改写 token/会话/实际成本事实；用户自建价格 snapshot 优先级高于此来源；当前仅确认表存在，列结构/币种/生效时间语义验证完成前不得自动启用；P2-00/P2-04 同步补充一致性读取、锁状态区分、schema 缓存、多数据库路径发现、文件替换游标失效等兼容性设计缺口 | 已确认 |
 | 2026-07-23 | 术语消歧：`CONTEXT.md` 改为 Native 层/Workbench 层两栏结构；确认 Workbench 的 Profile（`tool_profiles`，配置根目录+会话根目录组合）与 Codex 原生 `--profile`（同一 CODEX_HOME 内更小粒度的配置切换，Claude 无对应机制）是不同概念，互不替代；新增 Provider、账号、Turn、Thread、实例五个词条；Thread 与 `native_session_id` 的映射规则留待 Phase 3 确认，不提前定义 | 已确认 |
-| 2026-07-24 | 仓库结构反转：AI Coding Workbench 是主产品，仓库根即 Workbench 工程根（`app/`/`frontend/`/`tests/` 提升到仓库根，不再套 `products/`/`ai-coding-workbench/` 包装目录）；代理流量监控降级为挂载在主产品上的辅助功能 `features/proxy-traffic-monitor/`；未来新增辅助功能统一走 `features/<slug>/`，提供进程内模块/静态子应用/独立进程三种技术栈无关的集成模式；文档治理不对称——根 `AGENTS.md`/`CONTEXT.md` 兼任仓库级和主产品治理，辅助功能默认只配轻量 README；详见 `docs/adr/0002-workbench-root-and-feature-module-layout.md`（取代 ADR 0001 的放置决定）。物理迁移作为独立任务在继续 Phase 1 的 P1-12/P1-14/P1-13 之前执行 | 已确认，迁移待执行 |
+| 2026-07-24 | 仓库结构反转：AI Coding Workbench 是主产品，仓库根即 Workbench 工程根（`app/`/`frontend/`/`tests/` 提升到仓库根，不再套 `products/`/`ai-coding-workbench/` 包装目录）；代理流量监控降级为挂载在主产品上的辅助功能 `features/proxy-traffic-monitor/`；未来新增辅助功能统一走 `features/<slug>/`，提供进程内模块/静态子应用/独立进程三种技术栈无关的集成模式；文档治理不对称——根 `AGENTS.md`/`CONTEXT.md` 兼任仓库级和主产品治理，辅助功能默认只配轻量 README；详见 `docs/adr/0002-workbench-root-and-feature-module-layout.md`（取代 ADR 0001 的放置决定）。物理迁移已于当日完成：`git mv` 保留历史记录，26 个测试（Workbench 21 + 代理流量监控 5）全部通过，端到端 TestClient 冒烟测试确认两个子系统在同一 FastAPI 进程内正常工作 | 已确认，迁移已完成 |

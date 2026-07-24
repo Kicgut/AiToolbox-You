@@ -8,8 +8,9 @@
 **/.vite/
 
 # Local runtime data and machine-specific configuration
-proxy-traffic-monitor/data/
-proxy-traffic-monitor/config.yaml
+/data/
+features/proxy-traffic-monitor/data/
+features/proxy-traffic-monitor/config.yaml
 .claude/settings.local.json
 .impeccable/
 
