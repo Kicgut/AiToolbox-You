@@ -13,6 +13,7 @@ from typing import Any
 from app.ai_workbench.events.normalizer import normalize_jsonl
 from app.ai_workbench.indexing.profiles import DiscoveredProfile, discover_profiles
 from app.ai_workbench.models import NormalizedEvent, NormalizedEventType, ToolKind
+from app.ai_workbench.storage import FTS_NOTICE_VERSION
 
 PARSER_VERSION = 1
 
@@ -26,6 +27,14 @@ class ScanSummary:
     events_indexed: int
     errors: list[str]
     run_id: str | None = None
+
+
+class FtsConsentRequiredError(RuntimeError):
+    """Raised when an FTS write is requested without current explicit consent."""
+
+
+class FtsIndexingDisabledError(RuntimeError):
+    """Raised when a consented user has disabled future FTS writes."""
 
 
 def scan_sessions(conn: sqlite3.Connection, *, max_files_per_profile: int = 5000, changed_only: bool = False) -> ScanSummary:
@@ -122,6 +131,12 @@ def latest_scan_runs(conn: sqlite3.Connection, *, limit: int = 10) -> list[dict[
 
 
 def rebuild_fts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Rebuild the local FTS index only when persisted consent currently permits writes."""
+    settings = _fts_settings_row(conn)
+    if not _has_current_fts_consent(settings):
+        raise FtsConsentRequiredError("Current FTS notice has not been accepted")
+    if not settings["indexing_enabled"]:
+        raise FtsIndexingDisabledError("Future FTS indexing is disabled")
     conn.execute("DELETE FROM events_fts")
     rows = conn.execute(
         "SELECT id, session_copy_id, text_content FROM events WHERE text_content IS NOT NULL AND text_content != ''"
@@ -141,6 +156,7 @@ def rebuild_fts(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def clear_fts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Delete indexed text while leaving consent and future-indexing settings unchanged."""
     before = conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()["count"]
     conn.execute("DELETE FROM events_fts")
     conn.commit()
@@ -148,8 +164,64 @@ def clear_fts(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def fts_status(conn: sqlite3.Connection) -> dict[str, Any]:
-    row = conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()
-    return {"enabled": row["count"] > 0, "indexed_events": row["count"]}
+    """Return persisted FTS consent/settings together with the current index row count."""
+    settings = _fts_settings_row(conn)
+    indexed_events = conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()["count"]
+    return {
+        "consent_state": settings["consent_state"],
+        "indexing_enabled": bool(settings["indexing_enabled"]),
+        "recommended": settings["consent_state"] == "recommended_pending"
+        or (
+            settings["consent_state"] == "user_enabled"
+            and settings["notice_version"] != FTS_NOTICE_VERSION
+        ),
+        "notice_version": settings["notice_version"],
+        "indexed_events": indexed_events,
+    }
+
+
+def record_fts_consent(
+    conn: sqlite3.Connection,
+    *,
+    decision: str,
+    notice_version: int,
+) -> dict[str, Any]:
+    """Persist an explicit accept/decline decision for the current FTS notice."""
+    if notice_version != FTS_NOTICE_VERSION:
+        raise ValueError("notice_version must match the current FTS notice")
+    if decision not in {"accept", "decline"}:
+        raise ValueError("decision must be accept or decline")
+    now = int(time.time())
+    conn.execute(
+        """
+        UPDATE fts_settings
+        SET consent_state = ?, indexing_enabled = ?, notice_version = ?,
+            decision_at = ?, updated_at = ?
+        WHERE id = 1
+        """,
+        (
+            "user_enabled" if decision == "accept" else "user_declined",
+            1 if decision == "accept" else 0,
+            notice_version,
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    return fts_status(conn)
+
+
+def set_fts_indexing_enabled(conn: sqlite3.Connection, *, enabled: bool) -> dict[str, Any]:
+    """Enable or disable future FTS writes without changing the recorded consent state."""
+    settings = _fts_settings_row(conn)
+    if enabled and not _has_current_fts_consent(settings):
+        raise FtsConsentRequiredError("Current FTS notice has not been accepted")
+    conn.execute(
+        "UPDATE fts_settings SET indexing_enabled = ?, updated_at = ? WHERE id = 1",
+        (1 if enabled else 0, int(time.time())),
+    )
+    conn.commit()
+    return fts_status(conn)
 
 
 def list_sessions(
@@ -591,6 +663,7 @@ def _family_diff_summary(conn: sqlite3.Connection, family_id: str) -> dict[str, 
 
 
 def _redact_for_index(text: str) -> str:
+    """Replace common secret shapes before text is copied into the local FTS table."""
     import re
 
     patterns = [
@@ -603,6 +676,24 @@ def _redact_for_index(text: str) -> str:
     for pattern in patterns:
         redacted = re.sub(pattern, "<redacted>", redacted)
     return redacted
+
+
+def _fts_settings_row(conn: sqlite3.Connection) -> sqlite3.Row:
+    """Return the required singleton FTS settings row from an initialized schema."""
+    row = conn.execute("SELECT * FROM fts_settings WHERE id = 1").fetchone()
+    if row is None:
+        raise RuntimeError("fts_settings singleton is missing")
+    return row
+
+
+def _has_current_fts_consent(settings: sqlite3.Row) -> bool:
+    """Return whether the stored state permits FTS writes under the current notice."""
+    if settings["consent_state"] == "legacy_preserved":
+        return bool(settings["indexing_enabled"])
+    return (
+        settings["consent_state"] == "user_enabled"
+        and settings["notice_version"] == FTS_NOTICE_VERSION
+    )
 
 
 def _loads(value: str | None) -> Any:

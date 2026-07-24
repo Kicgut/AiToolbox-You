@@ -8,11 +8,12 @@ from app.ai_workbench.indexing.scanner import (
     fts_status,
     get_session_detail,
     list_sessions,
+    record_fts_consent,
     rebuild_fts,
     reconcile_sessions,
     scan_sessions,
 )
-from app.ai_workbench.storage import connect_workbench_db
+from app.ai_workbench.storage import FTS_NOTICE_VERSION, connect_workbench_db
 
 
 def test_discover_profiles_from_env(monkeypatch, tmp_path):
@@ -103,7 +104,7 @@ def test_schema_version_is_recorded(tmp_path):
 
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
 
-    assert row["value"] == "1"
+    assert row["value"] == "2"
 
 
 def test_manual_profile_and_fts_lifecycle(monkeypatch, tmp_path):
@@ -121,6 +122,7 @@ def test_manual_profile_and_fts_lifecycle(monkeypatch, tmp_path):
 
     add_manual_profile(conn, tool="codex", config_root=codex_home)
     scan_sessions(conn)
+    record_fts_consent(conn, decision="accept", notice_version=FTS_NOTICE_VERSION)
     rebuilt = rebuild_fts(conn)
     stored_text = conn.execute("SELECT text_content FROM events_fts").fetchone()["text_content"]
     cleared = clear_fts(conn)

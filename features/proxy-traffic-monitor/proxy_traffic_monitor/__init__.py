@@ -29,16 +29,14 @@ STATIC_URL = "/features/proxy-traffic-monitor/static"
 def mount(app: FastAPI) -> None:
     """Register this feature's routes and static assets onto the primary app.
 
-    Route path is preserved as `/` to keep this structural migration behavior-
-    equivalent; P1-12 (a separate, not-yet-approved Phase 1 task) is what moves
-    this to `/traffic` once workbench SPA becomes the primary `/` entry.
+    The feature page lives at `/traffic`; the Workbench SPA owns `/`.
     """
     app.mount(STATIC_URL, StaticFiles(directory=STATIC_DIR), name="proxy_traffic_monitor_static")
     app.include_router(live.router)
     app.include_router(stats.router)
     app.include_router(status.router)
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/traffic", response_class=HTMLResponse)
     async def _proxy_traffic_monitor_index():
         return open(f"{STATIC_DIR}/index.html", encoding="utf-8").read()
 

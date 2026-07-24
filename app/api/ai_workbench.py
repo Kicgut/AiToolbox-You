@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.ai_workbench.indexing.scanner import (
+    FtsConsentRequiredError,
+    FtsIndexingDisabledError,
     add_manual_profile,
     clear_fts,
     fts_status,
@@ -15,9 +17,11 @@ from app.ai_workbench.indexing.scanner import (
     list_manual_profiles,
     list_sessions,
     profile_diagnostics,
+    record_fts_consent,
     rebuild_fts,
     reconcile_sessions,
     scan_sessions,
+    set_fts_indexing_enabled,
 )
 from app.ai_workbench.storage import connect_workbench_db, default_workbench_paths
 
@@ -28,6 +32,15 @@ class ManualProfileRequest(BaseModel):
     tool: str = Field(pattern="^(codex|claude)$")
     config_root: str
     display_name: str | None = None
+
+
+class FtsConsentRequest(BaseModel):
+    decision: str = Field(pattern="^(accept|decline)$")
+    notice_version: int = Field(ge=1)
+
+
+class FtsSettingsRequest(BaseModel):
+    indexing_enabled: bool
 
 
 def _conn() -> sqlite3.Connection:
@@ -87,18 +100,62 @@ def scan_runs(limit: int = Query(default=10, ge=1, le=100)):
 
 @router.get("/search/status")
 def search_status():
+    """Return persisted FTS consent, future-write setting, and index size."""
     with _conn() as conn:
         return fts_status(conn)
 
 
+@router.post("/search/consent")
+def search_consent(payload: FtsConsentRequest):
+    """Record an explicit decision for the current full-text indexing notice."""
+    with _conn() as conn:
+        try:
+            return record_fts_consent(
+                conn,
+                decision=payload.decision,
+                notice_version=payload.notice_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "fts_notice_version_mismatch", "message": str(exc)},
+            ) from exc
+
+
+@router.patch("/search/settings")
+def search_settings(payload: FtsSettingsRequest):
+    """Enable or disable future FTS writes without implicitly recording consent."""
+    with _conn() as conn:
+        try:
+            return set_fts_indexing_enabled(conn, enabled=payload.indexing_enabled)
+        except FtsConsentRequiredError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "fts_consent_required", "message": str(exc)},
+            ) from exc
+
+
 @router.post("/search/rebuild")
 def search_rebuild():
+    """Rebuild FTS only after consent and the future-write setting both permit it."""
     with _conn() as conn:
-        return rebuild_fts(conn)
+        try:
+            return rebuild_fts(conn)
+        except FtsConsentRequiredError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "fts_consent_required", "message": str(exc)},
+            ) from exc
+        except FtsIndexingDisabledError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "fts_indexing_disabled", "message": str(exc)},
+            ) from exc
 
 
 @router.post("/search/clear")
 def search_clear():
+    """Clear indexed text without changing consent or future-write settings."""
     with _conn() as conn:
         return clear_fts(conn)
 

@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+FTS_NOTICE_VERSION = 1
+LEGACY_BUSINESS_TABLES = {
+    "manual_profile_roots",
+    "scan_runs",
+    "tool_profiles",
+    "accounts",
+    "repositories",
+    "projects",
+    "conversation_families",
+    "session_copies",
+    "session_relations",
+    "turns",
+    "events",
+    "source_checkpoints",
+    "events_fts",
+}
 
 
 DDL = [
@@ -182,6 +199,19 @@ DDL = [
         tokenize = 'unicode61'
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fts_settings (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        consent_state TEXT NOT NULL CHECK(
+            consent_state IN ('recommended_pending', 'user_enabled', 'user_declined', 'legacy_preserved')
+        ),
+        indexing_enabled INTEGER NOT NULL CHECK(indexing_enabled IN (0, 1)),
+        notice_version INTEGER NOT NULL DEFAULT 0,
+        decision_at INTEGER,
+        origin_schema_version INTEGER,
+        updated_at INTEGER NOT NULL
+    )
+    """,
 ]
 
 
@@ -196,13 +226,47 @@ def default_workbench_paths(base_dir: Path | None = None) -> WorkbenchPaths:
 
 
 def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
+    """Open the Workbench database, running schema migration only when the on-disk
+    schema_version does not already match SCHEMA_VERSION.
+
+    Every call used to re-run the full DDL list plus a schema_meta upsert, even when
+    nothing needed to change. Under concurrent requests (e.g. a scan holding a write
+    transaction while another request opens a fresh connection), that guaranteed write
+    on every connection could collide and surface as `sqlite3.OperationalError:
+    database is locked`. Migration now runs at most once per schema version bump;
+    ordinary connections after that only set pragmas and return.
+    """
     target = path or default_workbench_paths().db_path
+    database_existed = target.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(target)
+    conn = sqlite3.connect(target, timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    # WAL mode lets readers (e.g. session detail lookups) proceed against a
+    # consistent snapshot while a writer (e.g. an in-progress scan) holds its
+    # transaction open, instead of blocking on the writer's lock. This is a
+    # database-level setting that persists across connections once applied;
+    # re-issuing it on every connect is a cheap no-op when already active.
+    conn.execute("PRAGMA journal_mode = WAL")
+
+    existing_tables = _table_names(conn)
+    origin_schema_version = _read_schema_version(conn, existing_tables)
+    if origin_schema_version == SCHEMA_VERSION:
+        return conn
+
+    old_fts_count = _read_fts_count(conn, existing_tables)
+    is_new_instance = not database_existed or not (
+        "schema_meta" in existing_tables or existing_tables.intersection(LEGACY_BUSINESS_TABLES)
+    )
     for stmt in DDL:
         conn.execute(stmt)
+    _initialize_fts_settings(
+        conn,
+        is_new_instance=is_new_instance,
+        origin_schema_version=origin_schema_version,
+        old_fts_count=old_fts_count,
+    )
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -219,6 +283,69 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    """Add one column to an existing table when an older schema does not have it."""
     columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
     if column not in columns:
         conn.execute(f'ALTER TABLE "{table}" ADD COLUMN {column} {definition}')
+
+
+def _table_names(conn: sqlite3.Connection) -> set[str]:
+    """Return the user-defined table names present before schema migration."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {row["name"] for row in rows}
+
+
+def _read_schema_version(conn: sqlite3.Connection, tables: set[str]) -> int | None:
+    """Read the pre-migration schema version, returning None for missing or invalid metadata."""
+    if "schema_meta" not in tables:
+        return None
+    row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+    if row is None:
+        return None
+    try:
+        return int(row["value"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_fts_count(conn: sqlite3.Connection, tables: set[str]) -> int:
+    """Count legacy FTS rows without creating, clearing, or rebuilding the index."""
+    if "events_fts" not in tables:
+        return 0
+    return int(conn.execute("SELECT count(*) AS count FROM events_fts").fetchone()["count"])
+
+
+def _initialize_fts_settings(
+    conn: sqlite3.Connection,
+    *,
+    is_new_instance: bool,
+    origin_schema_version: int | None,
+    old_fts_count: int,
+) -> None:
+    """Create the singleton consent row while preserving observable legacy FTS behavior."""
+    if conn.execute("SELECT 1 FROM fts_settings WHERE id = 1").fetchone() is not None:
+        return
+    now = int(time.time())
+    if is_new_instance:
+        values = ("recommended_pending", 0, 0, None, None, now)
+    else:
+        values = (
+            "legacy_preserved",
+            1 if old_fts_count > 0 else 0,
+            0,
+            None,
+            origin_schema_version,
+            now,
+        )
+    conn.execute(
+        """
+        INSERT INTO fts_settings(
+            id, consent_state, indexing_enabled, notice_version,
+            decision_at, origin_schema_version, updated_at
+        )
+        VALUES(1, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )

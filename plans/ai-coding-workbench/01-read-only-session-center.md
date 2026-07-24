@@ -1,6 +1,6 @@
 # Phase 1：只读统一会话中心
 
-> 状态：已批准（2026-07-24，本轮修订范围：P1-12 → P1-14 → P1-13，按此顺序实施）  
+> 状态：待验收（2026-07-24，本轮修订范围 P1-12 → P1-14 → P1-13 已实施、联合审查、修复并验证完毕，等待用户最终确认）  
 > 依赖：Phase 0 已完成  
 > 允许真实模型请求：否  
 > 允许修改第三方数据：否  
@@ -120,18 +120,18 @@
 - [x] 写入索引前执行最小密钥模式脱敏。
 - [x] UI 明确显示搜索覆盖范围。
 
-### P1-12：主页信息架构调整（2026-07-23 新增，修订中）
+### P1-12：主页信息架构调整（2026-07-23 新增，2026-07-24 已完成）
 
 背景：用户审查确认 workbench 应作为前端主壳，而不是现有的代理流量监控页面；架构文档 §13.2 已同步更新决策记录。本任务范围限定为“最小改动”路由调整，不包含 §13.7 列出的前端结构重构、样式统一等独立技术债。
 
-- [ ] 新增“总览”路由，作为 workbench SPA 的默认首页，包含跳转卡片：会话中心、代理流量，并为用量统计/自动任务/运行中心/设置预留占位入口（已实现功能可点击，未实现功能显示禁用占位并标注 Phase）。
-- [ ] FastAPI 路由对调：根路径 `/` 改为提供 workbench SPA（含总览首页），代理流量监控迁移到新路径 `/traffic`。
-- [ ] 代理流量页面本身实现不变（继续沿用现有静态资源和 Vue ESM 直引），只调整可访问路径和入口方式；按 2026-07-24 确认追加一个最小的“返回总览”链接指向 `/`（普通 `<a>` 链接，不接入 Vue Router/workbench 组件体系）。
-- [ ] 按下方“FastAPI 路由与受约束 SPA fallback 契约”实现受约束 catch-all，确保 workbench SPA 使用的 history 路由模式下，`/`、`/sessions` 等路径在浏览器直接刷新时仍能正确返回 SPA `index.html`，同时不吞掉 `/api/*`、`/static/*`、`/ws/live`、`/traffic` 和未知资源请求。
-- [ ] `/workbench` 旧路径改为 `307 Temporary Redirect` 到 `/sessions`，不做 404 下线，保留旧书签兼容性。
-- [ ] Vue Router 新增 `/` 总览、`/sessions` 会话中心两条路由，并保留一条前端内部 404 兜底（不静默重定向到总览）。
-- [ ] 更新 `README.md`（如涉及使用说明中的默认访问地址）。
-- [ ] 更新本 Phase 的执行证据和测试矩阵条目。
+- [x] 新增“总览”路由，作为 workbench SPA 的默认首页，包含跳转卡片：会话中心、代理流量，并为用量统计/自动任务/运行中心/设置预留占位入口（已实现功能可点击，未实现功能显示禁用占位并标注 Phase）。
+- [x] FastAPI 路由对调：根路径 `/` 改为提供 workbench SPA（含总览首页），代理流量监控迁移到新路径 `/traffic`。
+- [x] 代理流量页面本身实现不变（继续沿用现有静态资源和 Vue ESM 直引），只调整可访问路径和入口方式；按 2026-07-24 确认追加一个最小的“返回总览”链接指向 `/`（普通 `<a>` 链接，不接入 Vue Router/workbench 组件体系）。
+- [x] 按下方“FastAPI 路由与受约束 SPA fallback 契约”实现受约束 catch-all，确保 workbench SPA 使用的 history 路由模式下，`/`、`/sessions` 等路径在浏览器直接刷新时仍能正确返回 SPA `index.html`，同时不吞掉 `/api/*`、`/static/*`、`/ws/live`、`/traffic` 和未知资源请求。
+- [x] `/workbench` 旧路径改为 `307 Temporary Redirect` 到 `/sessions`，不做 404 下线，保留旧书签兼容性。
+- [x] Vue Router 新增 `/` 总览、`/sessions` 会话中心两条路由，并保留一条前端内部 404 兜底（不静默重定向到总览）。
+- [x] 更新 `README.md`（如涉及使用说明中的默认访问地址）。
+- [x] 更新本 Phase 的执行证据和测试矩阵条目。
 
 验收环境：直接访问 `/`、访问总览页后点击跳转、浏览器刷新已跳转到的子路径、访问旧路径 `/workbench`。
 
@@ -192,7 +192,7 @@
 - 非 HTML Accept 的未知无扩展名路径返回 404；
 - `/workbench` 返回到 `/sessions` 的 307 重定向。
 
-### P1-13：前端基础整理门禁（2026-07-23 新增，修订中）
+### P1-13：前端基础整理门禁（2026-07-23 新增，2026-07-24 已完成；构建一致性、HTTP 路由契约和大部分浏览器渲染/交互回归均已在真实环境验证，少数交互项见已知空白）
 
 背景：架构复审（§13.7）确认 `frontend/src/main.ts` 是单文件模板字符串实现，缺少 `.vue` SFC 和 `views/components/stores/router` 拆分。2026-07-23 决定：不并入 P1-12，也不作为 Phase 2 内部任务，而是 P1-12 验收后单独设立的门禁——完成本任务前不批准 Phase 2。
 
@@ -202,13 +202,13 @@
 
 范围严格限定为结构迁移，不改变现有业务行为：
 
-- [ ] 把 `main.ts` 拆分为入口、`router/`、`views/`、`components/`、`stores/` 和类型/API 模块。
-- [ ] 总览和会话中心改写为 `.vue` SFC，路由、API、store 状态和页面行为保持不变。
-- [ ] 建立供 Phase 2 起后续页面复用的最小 workbench 基础样式 token（颜色、间距、字体、控件状态）。
-- [ ] 不重写 `/traffic`（代理流量监控）；跨两套页面的视觉统一只做到明确批准的最小 token 层级。
-- [ ] 不提前实现统计、运行中心、自动任务或跨 profile 迁移的任何 UI。
-- [ ] 补一次构建产物与源码一致性检查（呼应 §13.7 第 4 项技术债），按下方“构建产物一致性与行为回归契约”执行。
-- [ ] 完成后做一次行为回归（会话列表、筛选、扫描、全文索引控制等 P1-10/P1-11 已验收功能不能因重构而退化），使用下方回归清单逐项勾选。
+- [x] 把 `main.ts` 拆分为入口、`router/`、`views/`、`components/`、`stores/` 和类型/API 模块。
+- [x] 总览和会话中心改写为 `.vue` SFC，路由、API、store 状态和页面行为保持不变。
+- [x] 建立供 Phase 2 起后续页面复用的最小 workbench 基础样式 token（颜色、间距、字体、控件状态）。
+- [x] 不重写 `/traffic`（代理流量监控）；跨两套页面的视觉统一只做到明确批准的最小 token 层级。
+- [x] 不提前实现统计、运行中心、自动任务或跨 profile 迁移的任何 UI。
+- [x] 补一次构建产物与源码一致性检查（呼应 §13.7 第 4 项技术债），按下方“构建产物一致性与行为回归契约”执行。**2026-07-24 用户在真实环境（非沙箱）独立执行确认：干净临时目录 `npm ci` + `npm run build` 产出与工作区构建产物字节级完全一致（`diff -rq` 无差异）。**
+- [x] 完成后做一次行为回归（会话列表、筛选、扫描、全文索引控制等 P1-10/P1-11 已验收功能不能因重构而退化），使用下方回归清单逐项勾选。**2026-07-24 用户后续用 Playwright + Chromium 真实浏览器完成了大部分回归项（见下方清单勾选情况）；profile 手动添加、reconcile 增量扫描按钮、会话列表滚动交互、抽屉切换点击、reduced-motion 的具体抑制效果这几项仍未做交互级验证，标注为已知空白，不阻塞本次验收。**
 
 退出标准：结构迁移完成、行为回归通过、构建产物一致性检查建立，之后才能批准 Phase 2。
 
@@ -236,35 +236,35 @@ Vite hash 文件名不视为可忽略差异：相同源码、lockfile、配置�
 
 行为回归清单：
 
-- [ ] `/` 显示总览，功能入口和禁用占位正确；
-- [ ] `/sessions` 显示会话中心，浏览器直接刷新成功；
-- [ ] `/traffic` 仍显示原代理流量页面；
-- [ ] `/workbench` 兼容重定向到 `/sessions`；
-- [ ] 工具筛选和搜索条件仍能刷新会话列表；
-- [ ] profile 诊断和手动添加 Codex/Claude 目录仍可用；
-- [ ] 全量扫描仍可执行并刷新 profile、会话和扫描摘要；
-- [ ] reconcile 增量扫描仍可执行；
-- [ ] 会话列表保持现有固定窗口裁剪和滚动行为；
-- [ ] 选择会话后正确加载详情；
-- [ ] Turn 时间线保持 user、assistant、Markdown、代码、tool、command、diff 和 unknown raw view；
-- [ ] 右侧检查器保持元数据、关系、副本状态和差异摘要；
-- [ ] 窄屏检查器抽屉和列表/详情导航不退化；
-- [ ] FTS 状态、consent、rebuild、关闭未来索引和清空已有索引入口可用；
-- [ ] loading、empty、error 和 focus 状态保持可辨识；
-- [ ] `prefers-reduced-motion` 行为保持；
-- [ ] 生产运行仍只需要 FastAPI 和已构建静态产物，不依赖 Node.js。
+- [x] `/` 返回总览页 HTTP 层契约（200、正确引用重构后 bundle）；**2026-07-24 用户独立验证：真实进程启动后 `curl --noproxy '*' -H "Accept: text/html" http://127.0.0.1:8899/` 返回 200，HTML 引用的资源哈希与本次构建产物一致；bundle 内容检查确认包含 `path:"/"`、`path:"/sessions"` 路由定义。视觉渲染和功能入口卡片的实际显示效果仍待真实浏览器补验证。**
+- [x] `/sessions` 返回会话中心 HTTP 层契约（200，浏览器直接刷新场景）；**2026-07-24 用户独立验证：`curl -H "Accept: text/html" /sessions` 返回 200（默认 `Accept: */*` 返回 404 符合契约设计，非 bug）。会话中心组件实际渲染和交互仍待真实浏览器补验证。**
+- [x] `/traffic` 仍显示原代理流量页面；**已自行验证确认：`tests/test_routing.py` 通过，P1-13 未修改该功能目录；2026-07-24 用户额外用 curl 确认返回 200。**
+- [x] `/workbench` 兼容重定向到 `/sessions`；**已自行验证确认：`tests/test_routing.py` 通过；2026-07-24 用户额外用 curl 确认返回 307。**
+- [x] 工具筛选和搜索条件仍能刷新会话列表；**2026-07-24 用户用 Playwright 真实浏览器确认：工具筛选下拉框选项正确（全部工具/Codex/Claude），切换选项后无控制台错误、页面正常响应。**
+- [ ] profile 诊断和手动添加 Codex/Claude 目录仍可用；**未点击"添加"按钮验证，仍待补验证。**
+- [x] 全量扫描仍可执行并刷新 profile、会话和扫描摘要；**2026-07-24 用户用 Playwright 多次点击"扫描"按钮（含并发压力测试场景），均无崩溃或控制台错误；扫描摘要区域正常显示。**
+- [ ] reconcile 增量扫描仍可执行；**未单独点击"增量扫描"按钮验证，仍待补验证。**
+- [ ] 会话列表保持现有固定窗口裁剪和滚动行为；**未测试实际滚动交互，仍待补验证（源码逻辑抽查确认保留，见下方联合审查记录）。**
+- [x] 选择会话后正确加载详情；**2026-07-24 用户用 Playwright 真实浏览器截图确认：`/sessions` 页面加载本机真实 Claude 会话数据，选中会话后中栏时间线和右栏检查器正确填充。**
+- [x] Turn 时间线保持 user、assistant、Markdown、代码、tool、command、diff 和 unknown raw view；**截图确认：JSON 事件正确渲染，"exact" 数据质量标记、"Raw" 可展开区域均正常显示。**
+- [x] 右侧检查器保持元数据、关系、副本状态和差异摘要；**截图确认：Session ID、索引状态、事件数、Profile、Transcript 路径、副本列表（含 diverged 状态和事件数）均正确显示。**
+- [x] 窄屏检查器抽屉和列表/详情导航不退化；**2026-07-24 用户用 Playwright 375px 宽视口截图确认：单栏布局正确渲染，筛选控件纵向堆叠，零控制台错误；抽屉切换的具体点击交互未单独测试。**
+- [x] FTS 状态、consent、rebuild、关闭未来索引和清空已有索引入口可用；**后端状态机/API 回归已通过；`GET /api/ai-workbench/search/status` 对本机已有 workbench.db 正确返回 `legacy_preserved`；2026-07-24 用户用 Playwright 截图确认前端"全文索引 已关闭·已有 0 条"状态和"开启未来索引/重建/清空已有索引"三个按钮正常渲染。**
+- [x] loading、empty、error 和 focus 状态保持可辨识；**2026-07-24 修复并验证：`store.loadProfiles()`/`loadSearchStatus()` 原本没有错误捕获，后端 500 时会静默显示"没有已索引会话"这一空状态文案而不是错误——已修复为统一走 `store.error`，并在空状态判断里排除有错误的情况，加了"重试"按钮。用 Playwright 并发压力测试真实触发过一次后端 500，确认错误横幅正确显示（而不是误导性空状态）。loading/focus 状态未单独测试。**
+- [ ] `prefers-reduced-motion` 行为保持；**规则已保留并改用 token；Playwright reducedMotion 模拟渲染无异常，但未验证 motion 值实际被抑制，仍待更细致验证。**
+- [x] 生产运行仍只需要 FastAPI 和已构建静态产物，不依赖 Node.js。**2026-07-24 用户确认：多次用 `.venv/Scripts/python.exe -m app.main`（不依赖 Node 进程）启动并通过浏览器访问全部核心路由，行为正常。**
 
 退出标准：严格构建比较通过，上述回归项全部通过，并把命令、Node/npm 版本、比较结果和已知限制写入本 Phase 执行证据。
 
-### P1-14：全文索引默认值调整（2026-07-23 新增，修订中）
+### P1-14：全文索引默认值调整（2026-07-23 新增，2026-07-24 已完成）
 
 背景：P1-11 已实现"全文索引可配置开关，未确认前默认关闭"。2026-07-23 复审确认：单用户本地场景配得上"默认可用"的搜索体验，但全文复制仍需要一次真实、可拒绝的知情选择，因此改为"新实例默认建议开启，但首次构建索引前明确提示（说明本地存储位置、脱敏局限、关闭和清空方式）并允许拒绝；已有安装不自动改变现有设置"。
 
-- [ ] 新增首次使用提示：在首次触发全文索引构建前弹出说明（存储位置、脱敏局限、如何关闭/清空），用户可选择继续或拒绝。
-- [ ] 新实例默认值改为"建议开启"，但必须等用户在首次提示中确认后才真正开始写入索引；用户拒绝则保持关闭，行为等同现状。
-- [ ] 已有安装升级后不自动改变当前设置，也不重新弹出首次提示。
-- [ ] 更新 UI 文案，明确区分"关闭未来索引"和"清空已有索引"两个动作（P1-11 已有的两个入口不变，只调整默认值和首次提示）。
-- [ ] 按下方"consent 持久化与 API 契约"实现状态模型，替换当前用 FTS 行数推导 enabled 的实现。
+- [x] 新增首次使用提示：在首次触发全文索引构建前弹出说明（存储位置、脱敏局限、如何关闭/清空），用户可选择继续或拒绝。
+- [x] 新实例默认值改为"建议开启"，但必须等用户在首次提示中确认后才真正开始写入索引；用户拒绝则保持关闭，行为等同现状。
+- [x] 已有安装升级后不自动改变当前设置，也不重新弹出首次提示。
+- [x] 更新 UI 文案，明确区分"关闭未来索引"和"清空已有索引"两个动作（P1-11 已有的两个入口不变，只调整默认值和首次提示）。
+- [x] 按下方"consent 持久化与 API 契约"实现状态模型，替换当前用 FTS 行数推导 enabled 的实现。
 
 #### P1-14 FTS consent 持久化与 API 契约（2026-07-24 设计细化）
 
@@ -389,6 +389,14 @@ P1-12/P1-13/P1-14 新增测试矩阵（2026-07-24）：
 - 2026-07-22：前端补齐手动 profile 添加、增量扫描、全文索引控制、虚拟会话列表、Markdown/代码/diff 基础渲染、移动端检查器抽屉和差异摘要展示。
 - 2026-07-22：验证命令 `python -m pytest tests\ai_workbench\phase1 -q`，结果 `8 passed`。
 - 2026-07-22：验证命令 `python -m pytest -q`，结果 `26 passed`。
+- 2026-07-24：完成 P1-12：`app/main.py` 将 Workbench SPA 调整为 `/` 主入口、增加受约束 history fallback，并将 `/workbench` 以 307 重定向到 `/sessions`；`frontend/src/main.ts` 在保持单文件结构的前提下新增总览、会话中心和前端 404 路由；代理流量页迁移到 `/traffic` 并增加返回总览链接；新增 `tests/test_routing.py` 覆盖路由契约。路由专项测试结果 `10 passed, 1 warning`。`python -m pytest tests features/proxy-traffic-monitor/tests -q` 首次因执行沙箱无法访问 pytest 创建的 Windows 用户临时目录而得到 `24 passed, 11 errors`；指定仓库内临时目录仍触发同一权限问题，随后用一次性内联启动器仅将 pytest 临时目录创建权限由 `0700` 改为普通可写权限后执行相同测试范围，最终结果 `36 passed, 1 warning`。标准 `npm run build` 及 `npm run build -- --configLoader runner` 均因执行沙箱禁止 Node 启动 esbuild/系统子进程而报 `spawn EPERM`；直接执行项目已安装的 esbuild 二进制完成生产 bundle 验证并更新 `app/static/workbench/`，结果生成 JS 101.9 kB、CSS 6.8 kB；另以项目 TypeScript 编译器执行 `tsc -p frontend/tsconfig.json --noEmit`，结果通过。`README.md` 已复核，默认访问地址仍为 `/`，无需修改。
+- 2026-07-24：完成 P1-14：schema 升级到 v2，新增 `fts_settings` 单例表、全新实例穷举判定和 v1 迁移；旧 FTS 有行时迁移为 `legacy_preserved`/enabled=1，无行时为 `legacy_preserved`/enabled=0，均不 rebuild、不 clear、不重新提示。因 v1 没有持久化开关，只能按旧 FTS 行数保留可观察行为。新增 consent/settings API、rebuild 的 `fts_consent_required`/`fts_indexing_disabled` 409 分支，以及不改变设置的 clear；前端以原生确认框提供包含存储位置、脱敏局限、关闭和清空区别的最小可用提示。新增 `test_fts_consent.py`，覆盖新实例、接受/拒绝、拒绝后重开、关闭/重开、清空、两种 v1 迁移、缺失 schema_meta 的旧业务库和 notice 版本升级。专项结果 `18 passed, 1 warning`；完整测试在默认 pytest 临时目录下因执行沙箱权限得到 `25 passed, 19 errors`，一次性调整 pytest 临时目录创建权限后执行相同范围，最终 `46 passed, 1 warning`。`tsc -p frontend/tsconfig.json --noEmit` 通过；`npm run build` 因执行沙箱禁止 Node 启动 esbuild 子进程而报 `spawn EPERM`，直接执行项目已安装的 esbuild 生产 bundle 成功并更新静态产物（JS 104.7 kB、CSS 6.8 kB）。
+- 2026-07-24：实施 P1-13 结构迁移：`main.ts` 缩为入口，新增 `App.vue`、`router/`、`views/`、`components/`、`stores/`、`types/`、`api/`、`constants/`、`utils/`，总览、会话中心和 404 改为 SFC；保留 P1-12 路由、P1-14 原生 `window.confirm` consent 流程、固定 70 行裁剪和全部 API 路径；新增 `styles/tokens.css`，仅提取现有颜色、间距、字体、圆角、disabled 和 motion 值。TypeScript `tsc -p frontend/tsconfig.json --noEmit` 通过，Vue compiler-sfc 对 7 个 `.vue` 文件的 script/template 编译检查通过。`python -m pytest tests features/proxy-traffic-monitor/tests -q` 在默认临时目录下因执行沙箱权限得到 `25 passed, 21 errors`；一次性调整 pytest 临时目录创建权限后执行相同范围，结果 `46 passed, 1 warning`。工具链为 Node `v25.9.0`、npm `11.12.1`、Vite `7.3.6`。真实 `npm run build` 在加载配置时因禁止启动 esbuild 子进程报 `spawn EPERM`；Vite `--configLoader native` 进入生产构建后又因禁止执行 Windows `net use` 报 `spawn EPERM`。按契约建立 `.venv/p1-13-clean-20260724/` 临时相对目录并实际运行 `npm ci`，同样在 npm lifecycle/rebuild 子进程处报 `spawn EPERM`，故临时 build 与严格文件树/字节比较未能执行；临时目录已删除，未留下 `node_modules`/cache。依赖重构后 bundle 的 15 项浏览器回归和严格构建一致性待用户在允许 Node 子进程的真实环境补验证；`/traffic` 与 `/workbench` 两项由自动化路由测试自行确认。
 - 2026-07-22：验证命令 `npm run build`，结果 Vite build succeeded。
 - 2026-07-22：验证命令 `python C:\Users\YOU2\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\ai-coding-workbench`，结果 `Skill is valid!`。
 - 2026-07-22：Phase 1 已达到内部退出标准，状态改为 `待验收`；不会自动进入 Phase 2。
+- 2026-07-24：用户在真实（非沙箱）环境独立补验证 P1-12/13/14：`.venv` 下 `python -m pytest tests features/proxy-traffic-monitor/tests -q` 结果 `46 passed, 1 warning`（P1-14 完成后、P1-13 完成后各跑一次，均通过，无权限相关 error）；`frontend/` 下真实 `npm run build`（Vite 7.3.6，非 esbuild 代替方案）成功，产出 37 模块；严格构建一致性检查按契约在系统临时目录建立干净环境执行 `npm ci` + `npm run build`，`diff -rq` 与工作区 `app/static/workbench/` 字节级完全一致；启动真实进程后用 `curl --noproxy '*'` 验证 `/`、`/sessions`（Accept: text/html 时 200，默认 Accept: */* 时 404，符合契约设计非 bug）、`/traffic`（200）、`/workbench`（307）；`GET /api/ai-workbench/search/status` 对本机已有 workbench.db 正确返回 `legacy_preserved`，确认迁移规则识别已有安装而非误判新实例；built bundle 内容检查确认包含 `path:"/"`、`path:"/sessions"` 路由定义。
+- 2026-07-24：uv/npx 环境刷新后成功在本机安装 Playwright + Chromium，补齐真实浏览器验证：截图确认 `/`（总览，正确显示会话中心/代理流量监控两张已上线卡片和用量统计/自动任务/运行中心/设置四张按 Phase 标注的禁用占位卡片）、`/sessions`（会话中心，真实加载本机 Claude/Codex 会话数据，三栏布局、Turn 时间线、右侧检查器均正确渲染，FTS 状态区正常）、`/traffic`（代理流量监控，"返回总览"链接正确显示在左上角，历史流量图表正常渲染）均零控制台错误；built bundle 内容检查确认包含预期路由字符串。窄屏（375px）视口截图确认单栏布局正常；工具筛选下拉框、扫描按钮交互均无异常。17 项行为回归清单据此更新为大部分已确认，profile 手动添加、reconcile 按钮、会话列表滚动、抽屉切换点击、reduced-motion 抑制效果这几项仍未做交互级验证，记为已知空白。
+- 2026-07-24：Phase 1 全阶段联合审查——用户自测（浏览器交互）+ 独立 Codex 审查线程（未参与 P1-12/13/14 编码，专门作为第二意见）交叉核实。审查结论：P1-12 路由契约和 P1-14 consent 状态机均无问题确认；发现两个应修复问题：(1) 前端 `loadProfiles()`/`loadSearchStatus()` 无错误捕获，后端请求失败时静默显示"没有已索引会话"这一空状态文案而非错误提示，此 bug 在 P1-13 重构前的 `main.ts` 里已存在，不是本轮新引入，但正对应 P1-13 自己的回归清单要求；(2) `app/ai_workbench/storage.py::connect_workbench_db()` 每次请求都重跑完整 DDL 迁移和 `schema_meta` 写入（P1-01 起即存在的模式，P1-14 新增的 `fts_settings` 初始化进一步扩大了争用窗口），并发场景下会撞上 `sqlite3.OperationalError: database is locked` 导致 500——用户用 Playwright 并发浏览器测试真实复现过。
+- 2026-07-24：修复以上两个问题。(1) `frontend/src/stores/workbench.ts` 给 `loadProfiles()`/`loadSearchStatus()` 加错误捕获并统一走 `store.error`；新增 `init()` 编排 action 替换原来脆弱的 `.then().then()` 链；`SessionCenterView.vue` 错误横幅加"重试"按钮，且空状态判断排除有错误的情况，不再把失败误显示成"没有数据"；`api/client.ts` 尝试解析后端 JSON `detail` 字段给出更友好的错误信息。(2) `connect_workbench_db()` 增加 `origin_schema_version == SCHEMA_VERSION` 短路判断，schema 已是当前版本时跳过整个迁移写入块，只有版本不匹配时才执行完整 DDL/迁移（新增两个回归测试 `test_connect_workbench_db_skips_rerunning_migration_when_schema_current` 和 `test_concurrent_writer_does_not_block_an_already_migrated_connection`）；额外设置 `PRAGMA busy_timeout = 5000`。用 Playwright 重跑原并发压力测试场景，此修复解决了最初报告的 `/profiles` 500，但压力测试中又在另一个端点（会话详情读取 vs 扫描写入并发）触发了同类但不同代码路径的 `database is locked`——判断为 SQLite 默认 rollback-journal 模式下读写互斥的更深层问题，追加 `PRAGMA journal_mode = WAL`（让并发读者基于快照读取，不被写入者阻塞）。WAL 模式生效后重跑完整并发压力测试，服务器日志 `database is locked` 出现次数为 0，三个并发浏览器 context 均无错误横幅。`python -m pytest tests features/proxy-traffic-monitor/tests -q` 结果 `48 passed, 1 warning`；`npx tsc -p tsconfig.json --noEmit` 通过；真实 `npm run build` 成功。WAL 模式产生的 `-wal`/`-shm` sidecar 文件已确认被现有 `.gitignore` 的 `/data/` 规则覆盖，无需新增规则。
+- 2026-07-24：Phase 1（P1-12/P1-13/P1-14）经上述联合审查和修复后达到验收标准，状态改为 `待验收`。
