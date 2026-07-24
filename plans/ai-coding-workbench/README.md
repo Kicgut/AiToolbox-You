@@ -21,7 +21,7 @@
 | Phase | 文件 | 目标 | 当前状态 | 进入条件 |
 |---:|---|---|---|---|
 | 0 | `00-technical-foundation.md` | 技术 Spike、协议和兼容基线 | 已完成 | 架构讨论稿可用 |
-| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 修订中 | Phase 0 已完成 |
+| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 已批准 | Phase 0 已完成 |
 | 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 待审查 | Phase 1 已完成（含 P1-13 前端基础整理门禁） |
 | 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 待审查 | Phase 2 已完成 |
 | 4 | `04-automation-scheduler.md` | 多 Step 定时任务和恢复 | 待审查 | Phase 3 已完成 |
