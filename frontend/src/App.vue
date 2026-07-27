@@ -9,6 +9,7 @@
         <RouterLink to="/">总览</RouterLink>
         <RouterLink to="/sessions">会话</RouterLink>
         <a href="/traffic">代理流量</a>
+        <RouterLink to="/statistics">统计</RouterLink>
       </nav>
     </header>
     <RouterView />

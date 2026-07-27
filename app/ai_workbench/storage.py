@@ -212,6 +212,124 @@ DDL = [
         updated_at INTEGER NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS observations (
+        id TEXT PRIMARY KEY,
+        observation_kind TEXT NOT NULL CHECK(observation_kind IN ('session','supervised_run','proxy')),
+        source TEXT NOT NULL,
+        source_locator TEXT,
+        native_session_id TEXT,
+        native_event_id TEXT,
+        request_id TEXT,
+        conversation_family_id TEXT,
+        tool TEXT NOT NULL CHECK(tool IN ('codex','claude','proxy')),
+        profile_ref TEXT,
+        project_ref TEXT,
+        model TEXT,
+        provider TEXT,
+        started_at TEXT,
+        observed_at TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        quality TEXT NOT NULL CHECK(quality IN ('exact','estimated','unavailable')),
+        parser_version TEXT NOT NULL,
+        parse_status TEXT NOT NULL CHECK(parse_status IN ('parsed','partial','unknown','rejected')),
+        raw_ref TEXT,
+        http_status INTEGER,
+        latency_ms INTEGER,
+        ttft_ms INTEGER,
+        recorded_cost_minor INTEGER,
+        recorded_cost_currency TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS usage_records (
+        id TEXT PRIMARY KEY,
+        observation_id TEXT NOT NULL REFERENCES observations(id),
+        dedup_key TEXT NOT NULL UNIQUE,
+        event_kind TEXT NOT NULL CHECK(event_kind IN ('request_delta','request_total','session_total')),
+        input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
+        output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
+        cache_read_tokens INTEGER CHECK(cache_read_tokens IS NULL OR cache_read_tokens >= 0),
+        cache_creation_tokens INTEGER CHECK(cache_creation_tokens IS NULL OR cache_creation_tokens >= 0),
+        reasoning_tokens INTEGER CHECK(reasoning_tokens IS NULL OR reasoning_tokens >= 0),
+        total_tokens INTEGER CHECK(total_tokens IS NULL OR total_tokens >= 0),
+        counter_scope TEXT NOT NULL,
+        counter_baseline TEXT,
+        counter_reset INTEGER NOT NULL DEFAULT 0 CHECK(counter_reset IN (0,1)),
+        event_at TEXT,
+        recorded_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        quality TEXT NOT NULL,
+        parser_version TEXT NOT NULL,
+        merge_status TEXT NOT NULL DEFAULT 'primary',
+        conflict_group_id TEXT,
+        supersedes_id TEXT REFERENCES usage_records(id),
+        recorded_cost_minor INTEGER,
+        estimated_cost_minor INTEGER,
+        currency TEXT,
+        pricing_snapshot_id TEXT,
+        cost_reason TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_rollups (
+        bucket_date TEXT NOT NULL, timezone TEXT NOT NULL,
+        bucket_start_utc TEXT NOT NULL, bucket_end_utc TEXT NOT NULL,
+        tool TEXT, profile_ref TEXT, project_ref TEXT, model TEXT, provider TEXT,
+        source TEXT NOT NULL, quality TEXT NOT NULL,
+        request_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
+        cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
+        recorded_cost_minor INTEGER, estimated_cost_minor INTEGER, currency TEXT,
+        source_watermark TEXT NOT NULL, rollup_version TEXT NOT NULL, rebuilt_at TEXT NOT NULL,
+        data_revision TEXT, build_id TEXT,
+        PRIMARY KEY(bucket_date, timezone, tool, profile_ref, project_ref, model, provider, source, rollup_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pricing_snapshots (
+        id TEXT PRIMARY KEY, source_id TEXT NOT NULL, source_kind TEXT NOT NULL,
+        model_key TEXT NOT NULL, provider TEXT NOT NULL,
+        input_price_per_million REAL, output_price_per_million REAL,
+        cache_read_price_per_million REAL, cache_creation_price_per_million REAL,
+        currency TEXT, unit TEXT NOT NULL, effective_at TEXT, published_at TEXT,
+        source_updated_at TEXT, imported_at TEXT NOT NULL, observed_at TEXT NOT NULL,
+        parser_version TEXT NOT NULL, trust_state TEXT NOT NULL, validation_status TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS rollup_invalidations (
+        id TEXT PRIMARY KEY, bucket_date TEXT NOT NULL, timezone TEXT NOT NULL,
+        reason TEXT NOT NULL, min_observed_at TEXT, max_observed_at TEXT,
+        status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS observation_links (
+        id TEXT PRIMARY KEY, source_observation_id TEXT NOT NULL REFERENCES observations(id),
+        target_observation_id TEXT NOT NULL REFERENCES observations(id),
+        link_kind TEXT NOT NULL, confidence TEXT NOT NULL, details_json TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS rebuild_jobs (
+        id TEXT PRIMARY KEY, scope TEXT NOT NULL, status TEXT NOT NULL,
+        requested_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+        checkpoint TEXT, error TEXT, audit_json TEXT,
+        current_phase TEXT NOT NULL DEFAULT 'queued', processed_items INTEGER NOT NULL DEFAULT 0,
+        total_items INTEGER NOT NULL DEFAULT 0, progress_percent REAL NOT NULL DEFAULT 0,
+        options_json TEXT, parser_version TEXT NOT NULL DEFAULT 'current'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cc_switch_audit (
+        id TEXT PRIMARY KEY, observed_at TEXT NOT NULL, db_identity TEXT,
+        status TEXT NOT NULL, user_version INTEGER, capabilities_json TEXT,
+        message TEXT, action TEXT NOT NULL
+    )
+    """,
 ]
 
 
@@ -253,6 +371,7 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
     existing_tables = _table_names(conn)
     origin_schema_version = _read_schema_version(conn, existing_tables)
     if origin_schema_version == SCHEMA_VERSION:
+        _ensure_statistics_schema(conn)
         return conn
 
     old_fts_count = _read_fts_count(conn, existing_tables)
@@ -276,6 +395,28 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
     _ensure_column(conn, "source_checkpoints", "status", "TEXT NOT NULL DEFAULT 'active'")
     conn.commit()
     return conn
+
+
+def _ensure_statistics_schema(conn: sqlite3.Connection) -> None:
+    """Install additive Phase 2 tables for databases already at schema v2."""
+    for stmt in DDL[-9:]:
+        conn.execute(stmt)
+    for column, definition in (
+        ("recorded_cost_minor", "INTEGER"),
+        ("estimated_cost_minor", "INTEGER"),
+        ("currency", "TEXT"),
+        ("pricing_snapshot_id", "TEXT"),
+        ("cost_reason", "TEXT"),
+    ):
+        _ensure_column(conn, "usage_records", column, definition)
+    _ensure_column(conn, "daily_rollups", "data_revision", "TEXT")
+    _ensure_column(conn, "daily_rollups", "build_id", "TEXT")
+    for column, definition in (("http_status", "INTEGER"), ("latency_ms", "INTEGER"), ("ttft_ms", "INTEGER"), ("recorded_cost_minor", "INTEGER"), ("recorded_cost_currency", "TEXT")):
+        _ensure_column(conn, "observations", column, definition)
+    for column, definition in (("current_phase", "TEXT NOT NULL DEFAULT 'queued'"), ("processed_items", "INTEGER NOT NULL DEFAULT 0"), ("total_items", "INTEGER NOT NULL DEFAULT 0"), ("progress_percent", "REAL NOT NULL DEFAULT 0")):
+        _ensure_column(conn, "rebuild_jobs", column, definition)
+    _ensure_column(conn, "rebuild_jobs", "options_json", "TEXT")
+    _ensure_column(conn, "rebuild_jobs", "parser_version", "TEXT NOT NULL DEFAULT 'current'")
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

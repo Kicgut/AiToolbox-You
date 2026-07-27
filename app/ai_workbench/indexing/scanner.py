@@ -14,6 +14,7 @@ from app.ai_workbench.events.normalizer import normalize_jsonl
 from app.ai_workbench.indexing.profiles import DiscoveredProfile, discover_profiles
 from app.ai_workbench.models import NormalizedEvent, NormalizedEventType, ToolKind
 from app.ai_workbench.storage import FTS_NOTICE_VERSION
+from app.ai_workbench.usage import parse_usage_lines
 
 PARSER_VERSION = 1
 
@@ -346,10 +347,18 @@ def _iter_transcripts(profile: DiscoveredProfile, max_files: int) -> list[Path]:
 
 def _index_transcript(conn: sqlite3.Connection, profile: DiscoveredProfile, transcript: Path) -> int:
     stat = transcript.stat()
+    appended = _append_transcript_delta(conn, profile, transcript, stat)
+    if appended is not None:
+        return appended
     text = transcript.read_text(encoding="utf-8", errors="replace")
     complete_text, offset = _complete_text(text)
     lines = complete_text.splitlines(True)
     content_hash = hashlib.sha256(complete_text.encode("utf-8", errors="replace")).hexdigest()
+    after_stat = transcript.stat()
+    if (after_stat.st_size, after_stat.st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+        # The producer was still writing. Do not publish a partial snapshot;
+        # the next reconcile will retry against the new file identity.
+        raise OSError("transcript changed while reading; retrying")
     events = normalize_jsonl(lines, tool=profile.tool, source=str(transcript), cli_version=None)
     native_session_id = _native_session_id(profile.tool, transcript, events)
     copy_id = _copy_id(profile, native_session_id, transcript)
@@ -452,8 +461,72 @@ def _index_transcript(conn: sqlite3.Connection, profile: DiscoveredProfile, tran
         """,
         (str(transcript), profile.id, stat.st_size, stat.st_mtime_ns, offset, offset, content_hash, PARSER_VERSION, now),
     )
+    _persist_usage(conn, profile.tool.value, transcript, native_session_id, lines)
     _update_divergence(conn, family_id)
     return len(events)
+
+
+def _persist_usage(conn: sqlite3.Connection, tool: str, transcript: Path, native_session_id: str, lines: list[str]) -> None:
+    """Materialize native usage facts without changing the source transcript."""
+    usage_events, _ = parse_usage_lines(lines, tool=tool, source=str(transcript), native_session_id=native_session_id, parser_version=f"{tool}-jsonl-v1")
+    for event in usage_events:
+        observed_at = event.event_at or "1970-01-01T00:00:00Z"
+        observation_id = hashlib.sha256(f"{event.source_locator}|{event.dedup_key}".encode()).hexdigest()
+        payload_hash = hashlib.sha256(json.dumps(event.as_dict(), sort_keys=True).encode()).hexdigest()
+        conn.execute("""INSERT OR IGNORE INTO observations(id,observation_kind,source,source_locator,native_session_id,native_event_id,request_id,tool,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (observation_id, "session", f"{tool}_jsonl", event.source_locator, native_session_id, event.native_event_id, event.request_id, tool, observed_at, payload_hash, event.quality, event.parser_version, "parsed", observed_at))
+        conn.execute("""INSERT OR IGNORE INTO usage_records(id,observation_id,dedup_key,event_kind,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,reasoning_tokens,total_tokens,counter_scope,counter_reset,event_at,recorded_at,source,quality,parser_version,merge_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (hashlib.sha256(event.dedup_key.encode()).hexdigest(), observation_id, event.dedup_key, "request_delta", event.input_tokens, event.output_tokens, event.cache_read_tokens, event.cache_creation_tokens, event.reasoning_tokens, event.total_tokens, "request", int(event.counter_reset), event.event_at, observed_at, f"{tool}_jsonl", event.quality, event.parser_version, "primary", observed_at))
+
+
+def _append_transcript_delta(conn: sqlite3.Connection, profile: DiscoveredProfile, transcript: Path, stat: os.stat_result) -> int | None:
+    """Append only complete new JSONL lines when a checkpoint is reusable.
+
+    A changed prefix, truncation, parser upgrade, or missing session copy falls
+    back to the canonical full rebuild path. The append path never deletes old
+    events and commits its checkpoint only after a second stat check.
+    """
+    checkpoint = conn.execute("SELECT * FROM source_checkpoints WHERE path = ?", (str(transcript),)).fetchone()
+    if checkpoint is None or checkpoint["parser_version"] != PARSER_VERSION or stat.st_size <= checkpoint["parsed_offset"]:
+        return None
+    copy = conn.execute("SELECT * FROM session_copies WHERE transcript_path = ?", (str(transcript),)).fetchone()
+    if copy is None:
+        return None
+    try:
+        with transcript.open("rb") as handle:
+            handle.seek(int(checkpoint["parsed_offset"]))
+            delta_bytes = handle.read()
+        last_newline = delta_bytes.rfind(b"\n")
+        if last_newline < 0:
+            return 0
+        complete = delta_bytes[: last_newline + 1]
+        new_offset = int(checkpoint["parsed_offset"]) + len(complete)
+        lines = complete.decode("utf-8", errors="replace").splitlines(True)
+        events = normalize_jsonl(lines, tool=profile.tool, source=str(transcript), cli_version=None)
+        if not events:
+            return 0
+        start_seq = int(copy["event_count"])
+        for event in events:
+            sequence = start_seq + event.sequence_no
+            conn.execute("""INSERT INTO events(id,session_copy_id,sequence_no,event_type,role,text_content,structured_json,raw_json,source_offset,data_quality) VALUES(?,?,?,?,?,?,?,?,?,?)""", (f"{copy['id']}:{sequence}", copy["id"], sequence, event.event_type.value, event.role, event.text, json.dumps(event.structured, ensure_ascii=False) if event.structured else None, json.dumps(event.raw, ensure_ascii=False) if event.raw else None, int(checkpoint["parsed_offset"]) + (event.provenance.offset or 0), event.quality.value))
+        # Hash the complete committed prefix in streaming chunks; this is not
+        # used to parse the file and keeps the append parser byte-offset based.
+        digest = hashlib.sha256()
+        with transcript.open("rb") as handle:
+            remaining = new_offset
+            while remaining:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk: break
+                digest.update(chunk); remaining -= len(chunk)
+        after = transcript.stat()
+        if (after.st_size, after.st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+            raise OSError("transcript changed while appending; retrying")
+        now = int(time.time())
+        conn.execute("UPDATE session_copies SET event_count=?, updated_at=?, content_hash=?, head_event_hash=? WHERE id=?", (start_seq + len(events), now, digest.hexdigest(), hashlib.sha1(f"{copy['id']}:{start_seq + len(events)}".encode()).hexdigest(), copy["id"]))
+        conn.execute("UPDATE source_checkpoints SET file_size=?,mtime_ns=?,parsed_offset=?,last_complete_line_offset=?,content_hash=?,last_indexed_at=?,status='active' WHERE path=?", (stat.st_size, stat.st_mtime_ns, new_offset, new_offset, digest.hexdigest(), now, str(transcript)))
+        _persist_usage(conn, profile.tool.value, transcript, copy["native_session_id"], lines)
+        _update_divergence(conn, copy["family_id"])
+        return len(events)
+    except (OSError, UnicodeError):
+        raise
 
 
 def _upsert_profile(conn: sqlite3.Connection, profile: DiscoveredProfile) -> None:
@@ -613,10 +686,20 @@ def _needs_reindex(conn: sqlite3.Connection, transcript: Path) -> bool:
         stat = transcript.stat()
     except OSError:
         return False
-    row = conn.execute("SELECT file_size, mtime_ns, parser_version FROM source_checkpoints WHERE path = ?", (str(transcript),)).fetchone()
+    row = conn.execute("SELECT file_size, mtime_ns, content_hash, parser_version FROM source_checkpoints WHERE path = ?", (str(transcript),)).fetchone()
     if row is None:
         return True
-    return row["file_size"] != stat.st_size or row["mtime_ns"] != stat.st_mtime_ns or row["parser_version"] != PARSER_VERSION
+    if row["file_size"] != stat.st_size or row["mtime_ns"] != stat.st_mtime_ns or row["parser_version"] != PARSER_VERSION:
+        return True
+    # Size/mtime are only a fast path: sync tools can replace bytes while
+    # preserving both values. Reconcile must never retain stale transcript data.
+    try:
+        current_text = transcript.read_text(encoding="utf-8", errors="replace")
+        complete_text, _ = _complete_text(current_text)
+        current_hash = hashlib.sha256(complete_text.encode("utf-8", errors="replace")).hexdigest()
+    except OSError:
+        return True
+    return not row["content_hash"] or current_hash != row["content_hash"]
 
 
 def _mark_missing_sources(conn: sqlite3.Connection) -> None:

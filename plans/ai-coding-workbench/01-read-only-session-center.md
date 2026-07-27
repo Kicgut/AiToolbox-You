@@ -54,10 +54,10 @@
 - [x] 只提交完整换行事件，容忍正在写入的尾行。
 - [x] 处理文件替换、缩短、移动、归档和暂时占用（全量扫描通过整文件重建正确处理这些场景）。
 - [x] 加入每 profile 扫描限速、取消和进度事件。
-- [ ]（2026-07-24 重开）实现真正的按 byte offset 增量读取：从 `source_checkpoints.parsed_offset` 续读新增内容，不整文件 `read_text()` 重读、不 `DELETE FROM events` 后全量重插。当前 `scanner.py::_index_transcript` 每次都是全量重读重建，与架构 §5.3"只在换行完成后提交新事件"的增量语义不符，虽然功能结果目前正确，但性能和并发安全属性不达标。
-- [ ]（2026-07-24 重开）读取前后二次 stat 复核：`_index_transcript` 目前只在读取前 `stat()` 一次，读取后不比较文件长度和 mtime 是否发生变化；架构 §5.3 明确要求"读取前后比较文件长度和 mtime；变化时重新验证尾部"。
-- [ ]（2026-07-24 重开）对暂时被占用的文件实现指数退避，不标记为损坏：当前 `scan_sessions` 捕获 `OSError` 后直接记录错误继续，`watcher.py::run_forever` 只有固定 15 秒轮询间隔，没有单文件级别的指数退避状态机。
-- [ ]（2026-07-24 新增，实现缺口非仅测试缺口）`changed_only`/reconcile 模式的内容哈希判断缺失：`scanner.py::_needs_reindex`（第 539–547 行）只比较 `file_size`、`mtime_ns`、`parser_version`，不比较内容哈希。若文件内容被替换但 size 和 mtime 恰好不变（例如某些同步/备份工具的行为），reconcile 会直接跳过该文件，数据库保留过期内容，不符合架构 §5.3"哈希不匹配时重新解析"的要求。需要在 `_needs_reindex` 中补充内容哈希比较（或至少在哈希未知时保守触发重索引），并覆盖 hash-only replacement、file identity 变化场景。
+- [x]（2026-07-24 重开）实现真正的按 byte offset 增量读取：从 `source_checkpoints.parsed_offset` 续读新增内容，不整文件 `read_text()` 重读、不 `DELETE FROM events` 后全量重插。当前实现对可复用 checkpoint 的新增内容走 append 路径，异常情况安全回退全量重建。
+- [x]（2026-07-24 重开）读取前后二次 stat 复核：读取和追加完成后比较文件长度与 mtime，变化时不提交当前快照。
+- [x]（2026-07-24 重开）对暂时被占用的文件实现指数退避，不标记为损坏：watcher 对文件/数据库读写异常采用递增等待，并保留下一轮重试。
+- [x]（2026-07-24 新增）`changed_only`/reconcile 内容哈希判断：size/mtime/parser version 快速路径通过后仍校验完整已提交内容 hash，覆盖 hash-only replacement。
 
 验收：本节新增四项按架构 §5.3 逐条验证，见 `docs/verification-and-boundaries.md` IO-03/IO-04/IO-05/IO-06。
 
