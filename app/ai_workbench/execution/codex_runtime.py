@@ -258,6 +258,26 @@ class AppServerClient:
                 self._respond_to_approval(process, item, events)
                 continue
             self._emit(events, _map_record(item, "codex_app_server"))
+            # App Server is a long-lived JSON-RPC process, but Workbench owns
+            # exactly one turn per run.  Once that turn reaches a terminal
+            # protocol status, close the session so the coordinator can record
+            # the run terminal state instead of waiting forever.
+            if item.get("method") == "turn/completed":
+                self._close_after_turn(process)
+                break
+
+    @staticmethod
+    def _close_after_turn(process: Any) -> None:
+        try:
+            if process.stdin and not process.stdin.closed:
+                process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
     def _respond_to_approval(self, process: Any, request: dict[str, Any], events: list[dict[str, Any]]) -> None:
         """Bridge only schema-confirmed one-shot command/file approvals.

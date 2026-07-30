@@ -37,7 +37,10 @@ class ClaudeAdapter:
                allowed_tools: Iterable[str] = (), disallowed_tools: Iterable[str] = (),
                use_continue: bool = False) -> ClaudeStepProcess:
         """Build argv and spawn one isolated Claude Step process."""
-        argv = list(self.executable) + ["-p", prompt, "--output-format", "stream-json", "--include-partial-messages"]
+        # Claude 2.1.x requires --verbose when --print is paired with the
+        # stream-json output contract; without it the process rejects the
+        # request before creating or resuming a native session.
+        argv = list(self.executable) + ["-p", prompt, "--verbose", "--output-format", "stream-json", "--include-partial-messages"]
         uncertain = False
         if session_id:
             argv += ["--resume", session_id]

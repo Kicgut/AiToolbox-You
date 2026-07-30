@@ -839,6 +839,10 @@ npm run test:e2e:phase3
 | 2026-07-27 | frontend build / compileall | 通过 | 构建基线 |
 | 2026-07-30 | 代码与计划对照审查 | 发现 §3.2 所列闭环缺口 | P3-01～P3-09 重新按产品完成口径验收 |
 | 2026-07-30 | 本机只读 CLI 探测 | Codex 0.144.4；Claude 2.1.200；Codex schema 证实 `clientInfo` 必填和审批 server request | 更新协议设计，不发送 prompt |
+| 2026-07-30 | P3-10 Codex New | 真实回合 `c48b3043-d1c5-4df2-a806-1a97b5d333f1` succeeded；native thread `019fb3f8-a3a9-7eb2-a77e-62a1aa321c87`；只读 cwd；transcript 扫描到 12 个事件 | Codex New 通过 |
+| 2026-07-30 | P3-10 Codex Resume | 首次尝试暴露 rollout 文件名误作 session id；修复后 `412a644a-a5e1-4527-bf10-d0c969b837c0` succeeded，同一 native thread，事件序号 39 | Resume 通过；修复已进入代码 |
+| 2026-07-30 | P3-10 Codex Cancel | 对保持运行的 App Server 回合调用 cancel；run `d700c1f8-f640-4a67-a0e1-d86d9cb42db1` 最终 cancelled | 取消链通过 |
+| 2026-07-30 | P3-10 Claude New | 真实 CLI 创建 native session，但返回 `authentication_failed: Not logged in · Please run /login`；直接 CLI 探测同样失败，费用 0 | Claude New/Resume 阻塞于外部登录；不得标记 P3-10 完成 |
 
 后续每轮证据必须写明：commit/worktree 状态、命令、测试数量、fake/real、CLI 版本、cwd、是否产生第三方写入、产物位置和未覆盖项。
 
@@ -848,3 +852,4 @@ npm run test:e2e:phase3
 - 2026-07-27：批准 Phase 3 实施；确认 Claude v1 使用每 Turn 一个短生命周期进程和显式 resume。
 - 2026-07-27：完成第一轮组件实现与测试，形成 151/36/build/compile 基线；真实回合未授权。
 - 2026-07-30：重新审查计划与当前代码。确认此前“P3-01～P3-09 已完成”的表述过宽：组件存在，但 API dispatch、Profile 环境、Claude 路由、lease、真实取消、双向审批、WebSocket 无竞态恢复和浏览器 E2E 尚未形成闭环。计划状态改为 `实施中`，新增 P3-00/P3-11 门禁，明确 run=single-turn、终态不可变、Retry 新建实体、单进程 runtime 和 P3-10 前置条件。
+- 2026-07-30：获得用户一次性授权并执行 P3-10。Codex New/Resume/Cancel 通过；真实 Claude 因 CLI 未登录阻塞，需用户在 Claude 自有登录流程完成 `/login` 后另行授权 Claude New/Resume，当前阶段不得改为“已完成”。

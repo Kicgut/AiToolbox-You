@@ -14,6 +14,8 @@ from app.ai_workbench.indexing.scanner import (
     scan_sessions,
 )
 from app.ai_workbench.storage import FTS_NOTICE_VERSION, SCHEMA_VERSION, connect_workbench_db
+from app.ai_workbench.indexing.scanner import _native_session_id
+from app.ai_workbench.models import ToolKind
 
 
 def test_discover_profiles_from_env(monkeypatch, tmp_path):
@@ -157,6 +159,12 @@ def test_divergent_copies_return_diff_summary(monkeypatch, tmp_path):
     assert detail is not None
     assert detail["diffSummary"]["copies"] == 2
     assert detail["diffSummary"]["common_prefix_events"] == 1
+
+
+def test_codex_thread_id_is_used_for_resume_instead_of_rollout_filename(tmp_path):
+    event = type("Event", (), {"raw": {"type": "session_meta", "payload": {"session_id": "019fb3f8-a3a9-7eb2-a77e-62a1aa321c87"}}})()
+
+    assert _native_session_id(ToolKind.CODEX, tmp_path / "rollout-2026.jsonl", [event]) == event.raw["payload"]["session_id"]
 
 
 def test_api_routes_are_registered(monkeypatch, tmp_path):

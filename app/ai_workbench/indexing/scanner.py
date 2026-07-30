@@ -573,10 +573,18 @@ def _complete_text(text: str) -> tuple[str, int]:
 def _native_session_id(tool: ToolKind, transcript: Path, events: list[NormalizedEvent]) -> str:
     for event in events:
         raw = event.raw or {}
-        for key in ("session_id", "sessionId", "id"):
-            value = raw.get(key)
-            if isinstance(value, str) and len(value) >= 8:
-                return value
+        # Codex JSONL records expose the resumable App Server identity as
+        # ``thread_id`` on ``thread.started``.  The rollout filename is only
+        # a storage key and is rejected by ``thread/resume``.
+        keys = ("thread_id", "threadId", "session_id", "sessionId", "id") if tool is ToolKind.CODEX else ("session_id", "sessionId", "id")
+        candidates = [raw]
+        if isinstance(raw.get("payload"), dict):
+            candidates.insert(0, raw["payload"])
+        for candidate in candidates:
+            for key in keys:
+                value = candidate.get(key)
+                if isinstance(value, str) and len(value) >= 8:
+                    return value
     return transcript.stem
 
 
