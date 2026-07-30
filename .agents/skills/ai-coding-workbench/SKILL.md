@@ -29,7 +29,7 @@ Follow the repository's approved architecture and phase gates. Keep design decis
 - Never write to `~/.cc-switch`, `~/.antigravity_cockpit`, third-party databases, account files, or credential stores unless a separately approved migration task names the exact target and rollback.
 - Do not upgrade, downgrade, reinstall, repair, or run an updater for external software such as Cockpit Tools, CC Switch, Codex CLI, or Claude Code. Report version compatibility read-only; if an upgrade is useful, stop and recommend that the user perform it through the software's own update UI.
 - Do not send real model prompts or consume quota during tests unless the user approves the account, model, prompt, and budget cap.
-- Do not enable dangerous permission bypasses by default. Exercise approval, sandbox, timeout, cancellation, and process-tree cleanup paths.
+- When a permission bypass (`danger-full-access`, `--dangerously-bypass-approvals-and-sandbox`) seems necessary, ask the user first and get explicit confirmation before using it. Exercise approval, sandbox, timeout, cancellation, and process-tree cleanup paths. A high-privilege Codex process you did not start yourself is likely the user's own tooling — leave it alone rather than interrupting it; confirm with the user first if it truly needs to be stopped.
 - Avoid shell command-string concatenation for prompts. Spawn executables with argument arrays and use stdin or protocol fields for user content.
 
 ## Implement through stable boundaries

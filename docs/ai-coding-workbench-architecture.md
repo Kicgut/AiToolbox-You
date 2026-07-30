@@ -508,7 +508,11 @@ Codex 和 Claude 解析器统一产生：
 
 ### 9.1 工具适配器接口
 
-待办（Phase 3 设计前必须确认）：Codex App Server 协议用 `threadId` 标识会话（见 `CONTEXT.md` Thread 词条），Phase 1 只读解析 JSONL 用的是 `native_session_id`。App Server 客户端接入前必须明确 `threadId` 与 `native_session_id` 的映射规则，当前未定义，不得假设两者天然等价。
+Phase 3 已定义以下受限映射：对于由 Workbench 新建或 Fork 的 Codex App Server run，`thread/start` / `thread/fork` 返回的 `threadId` 同时记录为该 run 的 `native_thread_id` 与 `native_session_id`；它只说明本次受监管运行拥有的 native 身份，不会反向修改或猜测既有 JSONL transcript 的 ID。Resume/Fork 的输入必须来自已索引 `session_copy_id` 的 `native_session_id`，禁止使用“最近会话”推断。Claude 的 native session ID 则只从其 stream-json init/result 记录提取。
+
+Phase 3 的产品 run 固定为单回合：一个 Workbench Run 只有一个 Step，对应一次原生 Turn；多 Step 编排属于 Phase 4。所有状态、事件和 cursor 在同一 SQLite 事务提交后才广播。部署仅支持一个 FastAPI worker 和一个 Runtime Coordinator；Coordinator 统一拥有进程树、timeout、writer lease、审批 waiter 与进程内 WebSocket fan-out。连接过程采用先订阅、后 cursor replay、按 `(run_id, sequence_no)` 去重的顺序，断线重连以 SQLite 为事实源。
+
+原生 command/file approval 是一次性双向桥：server request 先持久化为 `pending`，浏览器决定后进入 `responding`，只有 JSON-RPC response 实际写入同一 App Server stdin 才成为 accepted/declined/cancelled；写入失败标记 `delivery_failed`。浏览器断开不会改变 pending 状态，服务重启时失联 run 统一进入 `interrupted`。
 
 ```text
 probe()

@@ -37,15 +37,24 @@ This is why a review pass and the fix for what it finds are naturally two separa
 
 ## When you hit a real permission dead end
 
-If `--fresh --write` still can't write (not a stale read-only thread — an actual environment restriction even on a freshly-created write thread), don't reach for `-c danger-full-access` or `--dangerously-bypass-approvals-and-sandbox` on your own judgment. This repo's own `AGENTS.md` and `docs/codex-project-guide.md` are explicit that these are not to be used as defaults to solve ordinary development problems, and a stuck sandbox on a `--write` thread is usually a configuration problem (check whether `.codex/config.toml`'s `sandbox_mode = "workspace-write"` is actually being picked up), not a reason to disable sandboxing entirely.
+If `--fresh --write` still can't write (not a stale read-only thread — an actual environment restriction even on a freshly-created write thread), check the mundane cause first: a stuck sandbox on a `--write` thread is usually a configuration problem (check whether `.codex/config.toml`'s `sandbox_mode = "workspace-write"` is actually being picked up), not something that needs disabling sandboxing entirely.
 
 If you've confirmed it's a genuine dead end and the task can't proceed otherwise:
 
 1. Do the fix yourself directly (you almost always have write access even when Codex's sandbox doesn't) — this is usually faster than escalating anyway.
-2. Only if you truly need Codex specifically to perform the write (e.g. the task requires its long-running/background execution), stop and use `AskUserQuestion` to ask the user for explicit, one-time authorization before adding `-c danger-full-access` or `--dangerously-bypass-approvals-and-sandbox` to that specific dispatch. State plainly what command will run and why weaker options were insufficient. Never apply it silently, never make it the default for future dispatches, and don't carry the authorization forward to unrelated tasks.
+2. Only if you truly need Codex specifically to perform the write (e.g. the task requires its long-running/background execution), stop and use `AskUserQuestion` to ask the user for explicit, one-time authorization before adding `-c danger-full-access` or `--dangerously-bypass-approvals-and-sandbox` to that specific dispatch. State plainly what command will run and why weaker options were insufficient. Get confirmation each time you'd add it to a new dispatch — don't carry a prior authorization forward to unrelated tasks.
+
+## If you find a Codex/node process already running with a permission bypass
+
+Checking process lists (e.g. while debugging a stuck job) can turn up a `codex.js` or `node` process already running with `--dangerously-bypass-approvals-and-sandbox` or `-s danger-full-access` that you did not start this turn. This is very likely the user's own tooling — e.g. a project-local launcher script (`codex-auto.cmd` in this repo) they run themselves outside Claude Code — not a leak from your own dispatch. Leave it running. Don't kill it, don't `taskkill` it, don't treat it as an incident to clean up on your own initiative. If you have a genuine reason it needs to be interrupted, ask the user first rather than acting unilaterally — including with broad commands like `taskkill /IM node.exe /F` that would hit unrelated processes too.
+
+## Escaping long prompts when dispatching via raw Bash
+
+If you dispatch `codex-companion.mjs task ...` directly via the Bash tool (rather than through the `codex:codex-rescue` subagent) with a long, code-reference-heavy prompt written inline in a double-quoted shell string, any `` `backtick-quoted-code` `` in that prompt gets interpreted by bash as command substitution before Codex ever sees it — e.g. `` `tzdata` `` silently runs `tzdata` as a shell command and splices in its (usually empty/error) output, quietly corrupting every code reference in the prompt. Single-quoting the whole prompt avoids that but breaks the moment the prompt itself contains a `'`. Write the prompt to a file first and inline it with `"$(cat file)"` — the substituted text is treated as literal data, not re-parsed for backticks or `$()`, so code references survive intact. Verify by checking `status --all --json`'s `summary` field for the dispatched job before trusting it did anything useful with a corrupted prompt.
 
 ## Common Mistakes
 
 - Resuming a review thread to also get the fix written — fails silently confusing ("it says read-only but I asked for write this time"). Start fresh instead.
 - Treating a Codex-reported `npm run build` success as ground truth when its sandbox blocks subprocess spawning — it may have silently substituted a different bundler. Rebuild yourself.
 - Reaching for the dangerous bypass flags as a first response to any sandbox error, instead of first checking whether the request simply needed `--fresh --write` or a config fix.
+- Mistaking another session's intentionally-privileged Codex process for an error state of your own session and trying to kill it — confirm with the user before interrupting any process you didn't start yourself.

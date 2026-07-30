@@ -353,26 +353,19 @@ assert communicate.input == prompt
 
 #### RUN-02 超时、取消和进程树清理
 
-- 现有部分覆盖：`test_supervisor_times_out_process` 只断言 timeout 和非空 exit code。
-- 自动化建议：扩展 `phase0/test_supervisor.py`，fake CLI 派生长寿命 child；超时/取消后用 PID handle 断言父子都退出，Windows 使用 Job Object 或等价受控机制；stdout/stderr 有界且状态确定。
-- 当前 `process.kill()` 只杀父进程，进程树保证为空白。
+- 已覆盖：`tests/ai_workbench/phase3/test_p3_06_supervisor.py` 使用真实父子 fixture 验证 timeout 和已登记取消都会结束 Windows 子进程树；`test_p3_06_runtime_coordinator.py` 覆盖 timeout 事实先持久化、运行结束后终态与 session writer lease。
+- 运行时边界：Coordinator 是唯一进程 handle 所有者；取消 API 只持久化请求，Coordinator 再终止树。无法确认清理时应为 `interrupted`，不得伪报 `cancelled`。
 
 #### RUN-03 审批、沙箱和危险权限可见性
 
-- 自动化建议：未来新建 `phase3/test_execution_policy.py`：
-
-```python
-assert default_policy.dangerous_bypass is False
-assert run_without_approval(risky_action).status == "awaiting_approval"
-assert approved_policy.fields_are_visible_for_entire_run
-assert cancellation_and_timeout_paths_cleanup_tree()
-```
+- 已覆盖的审批桥：`tests/ai_workbench/phase3/test_p3_07_approval.py` 与 `test_p3_06_runtime_coordinator.py` 验证 `pending → responding → delivered terminal`、并发决定只允许一个胜出，以及 native delivery failed 不显示为 accepted。Codex command/file request 由同一 App Server stdin 回送；Claude stream-json 明确不提供该桥。
+- 仍需 P3-10 人工验证的项目：真实 CLI 的沙箱实际执行、模型侧权限语义和额度上限。
 
 - 人工/AI 必查：
   - [ ] 默认 sandbox/approval 不被绕过。
   - [ ] 危险权限由用户显式开启，并在运行中心持续显示。
   - [ ] SSH 隧道访问不降低审批、预算、回滚。
-- 当前真空白，Phase 3 未批准。
+- 当前剩余边界是 P3-10 的真实模型回合验收；自动化 fake 运行不得替代该授权。
 
 #### RUN-04 真实模型请求与 P3-10
 

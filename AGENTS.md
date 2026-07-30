@@ -32,7 +32,7 @@
 - Never write or migrate the CC Switch database from this project. Its connector is read-only and must fall back to native session parsing.
 - Never upgrade, downgrade, reinstall, repair, or invoke an updater for Cockpit Tools, CC Switch, Codex CLI, Claude Code, or other external software as part of a project phase. Read-only version detection is allowed. If an upgrade may help, explain the impact, ask the user first, and recommend that the user perform the complete software update through that product's own update UI. A phase approval does not authorize an external-software upgrade.
 - Do not send real Codex or Claude prompts during tests without explicit approval of account, model, prompt, and budget.
-- Do not use dangerous approval or sandbox bypasses as defaults.
+- If a task genuinely needs an approval/sandbox bypass (`danger-full-access`, `--dangerously-bypass-approvals-and-sandbox`), ask the user first and get explicit confirmation before using it on that dispatch. A Codex process already running with such a bypass that you did not start yourself is very likely something the user launched intentionally (e.g. a project-local launcher script) — leave it running and don't interrupt or kill it; if it genuinely needs to be interrupted, confirm with the user first.
 
 ## Implementation constraints
 
@@ -43,6 +43,15 @@
 - Keep deployment independent of Node.js by shipping built frontend assets with FastAPI.
 - Add fixture-based tests for every supported external schema and version branch.
 - Attribute copied upstream code with repository, source URL, commit, license, and changes; add `THIRD_PARTY_NOTICES.md` when copying begins.
+
+## Generated artifact hygiene
+
+- Do not create test databases, screenshots, generated schemas, temporary scripts, logs, basetemp directories, or verification reports in the repository root.
+- Put disposable test/runtime scratch output under `.artifacts/tmp/`; put retained local verification evidence under `.artifacts/verification/`.
+- Use a task- or run-specific subdirectory below those roots. Never invent new top-level `*-temp`, `pytest-*`, `verification-*`, `codex-test-*`, or smoke database paths.
+- Pytest tests should prefer the built-in `tmp_path`/`tmp_path_factory`. Manual `--basetemp` paths must be below `.artifacts/tmp/pytest/`.
+- Generated frontend assets intentionally shipped by FastAPI remain under `app/static/workbench/`; source-controlled fixtures remain under `tests/fixtures/`. Runtime application data remains under ignored `data/`. These are not verification scratch directories.
+- Before finishing a task, remove disposable artifacts and check `git status --short` for root-level leakage. See `docs/artifact-hygiene.md` for the full policy.
 
 ## Repository layout
 

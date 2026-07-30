@@ -7,6 +7,10 @@
 **/node_modules/
 **/.vite/
 
+# Repository-local disposable artifacts. Only the policy file is tracked.
+.artifacts/*
+!.artifacts/README.md
+
 # Local runtime data and machine-specific configuration
 /data/
 features/proxy-traffic-monitor/data/
@@ -25,3 +29,11 @@ features/proxy-traffic-monitor/config.yaml
 *.bak
 Thumbs.db
 .DS_Store
+
+# Legacy root-level test/verification names are forbidden; ignore defensively.
+/.pytest-*/
+/pytest-*/
+/codex-test-*/
+/verification-temp*/
+/phase*-temp*/
+/.tmp-smoke*.db

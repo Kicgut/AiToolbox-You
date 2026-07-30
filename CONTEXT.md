@@ -18,7 +18,7 @@ Codex CLI 自己的配置切换机制：`~/.codex/<name>.config.toml`，通过 `
 _Avoid_: 不要简称"profile"后直接当作 Workbench Profile 使用；必须写"Codex 原生 --profile"
 
 **Thread（Codex App Server 协议）**：
-Codex App Server 协议方法（`thread/start`、`thread/list`、`thread/read` 等）里的会话标识概念。Phase 1 只读解析 JSONL，尚未触达 App Server，因此 Thread 与 Workbench `native_session_id` 的映射规则目前未定义，留待 Phase 3 引入 App Server 客户端时确认，不在此提前下结论。
+Codex App Server 协议方法（`thread/start`、`thread/list`、`thread/read` 等）里的会话标识概念。对 Workbench Phase 3 新建或 Fork 的受监管 run，返回的 `threadId` 同时落入该 run 的 `native_thread_id` 与 `native_session_id`；这只是本次运行的原生身份记录，不反向推断已有 JSONL transcript。Resume/Fork 只能显式使用索引 `Session Copy` 的 `native_session_id`，禁止“最近会话”语义。
 
 **实例（Instance）**：
 Cockpit Tools 自己的原生概念，记录在其 `codex_instances.json` 里。Workbench 不使用"实例"这个词描述自己的抽象，对应的本项目概念请用 Profile（Workbench 层）。

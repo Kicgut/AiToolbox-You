@@ -64,7 +64,7 @@ memories = true
 
 这里的 `memories = true` 只是在受信任项目中启用本机 Memory 功能，不会创建项目隔离的 Memory 仓库；生成内容仍写入当前 Codex host 的 `CODEX_HOME/memories/`。是否让某个会话读取或贡献本地 Memory，仍由用户通过 `/memories` 控制。
 
-`workspace-write + never` 不是”完全权限”：它表示不弹审批并限定在允许的工作区写入范围内。不要用 `danger-full-access` 或 `--dangerously-bypass-approvals-and-sandbox` 解决普通开发问题。
+`workspace-write + never` 不是”完全权限”：它表示不弹审批并限定在允许的工作区写入范围内。如果确实需要用 `danger-full-access` 或 `--dangerously-bypass-approvals-and-sandbox` 解决权限死结，先和用户交互确认说明原因，再在那一次派发上使用。看到并非本次会话启动、已经带这类高权限运行的 Codex 进程，大概率是用户自己的工具（例如项目本地的启动脚本），直接跳过不要理会；确有必要中断时，也要先和用户交互确认。
 
 注意术语消歧：Codex 自己的 `--profile`/`~/.codex/<name>.config.toml`（同一 `CODEX_HOME` 内切换 model/审批策略等配置）与本项目 Workbench 的 Profile（`tool_profiles` 表，指配置根目录+会话根目录组合）是不同概念，互不替代，详见根 `CONTEXT.md` Profile 词条。
 

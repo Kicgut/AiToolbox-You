@@ -21,9 +21,9 @@
 | Phase | 文件 | 目标 | 当前状态 | 进入条件 |
 |---:|---|---|---|---|
 | 0 | `00-technical-foundation.md` | 技术 Spike、协议和兼容基线 | 已完成 | 架构讨论稿可用 |
-| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 待验收 | Phase 0 已完成 |
-| 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 待审查 | Phase 1 已完成（含 P1-13 前端基础整理门禁） |
-| 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 待审查 | Phase 2 已完成 |
+| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 已完成 | Phase 0 已完成 |
+| 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 已完成 | Phase 1 已完成（含 P1-13 前端基础整理门禁） |
+| 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 实施中 | Phase 2 已完成 |
 | 4 | `04-automation-scheduler.md` | 多 Step 定时任务和恢复 | 待审查 | Phase 3 已完成 |
 | 5 | `05-cross-profile-migration.md` | 跨 profile 复制、分叉与回滚 | 待审查 | Phase 1、3、4 已稳定 |
 
@@ -65,3 +65,6 @@
 - 不把后续 Phase 的功能偷偷并入当前 Phase。
 - 新增阶段时更新本索引、依赖关系和 `docs/ai-coding-workbench-architecture.md`；涉及新术语时同步更新 `CONTEXT.md`。
 - 任务编号一旦用于执行证据，不复用给不同含义的任务。
+# Artifact hygiene
+
+All phase implementation and verification follows `docs/artifact-hygiene.md`. Disposable test output belongs under `.artifacts/tmp/`; short-lived verification evidence belongs under `.artifacts/verification/`. Phase plans must not introduce new root-level temporary directories or databases.
