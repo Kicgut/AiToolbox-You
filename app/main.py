@@ -64,7 +64,7 @@ def _accepts_html(request: Request) -> bool:
 def _is_workbench_history_path(spa_path: str) -> bool:
     """Return whether a path is eligible for the constrained SPA history fallback."""
     segments = [segment for segment in spa_path.split("/") if segment]
-    if not segments or segments[0].lower() in {"api", "static", "traffic", "ws"}:
+    if not segments or segments[0].lower() in {"api", "static", "ws"}:
         return False
     return not Path(segments[-1]).suffix
 

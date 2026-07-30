@@ -13,8 +13,6 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 
 from proxy_traffic_monitor.clash_client import ClashClient
 from proxy_traffic_monitor.collector import Collector
@@ -22,23 +20,15 @@ from proxy_traffic_monitor.config import load_config
 from proxy_traffic_monitor.db import init_db
 from proxy_traffic_monitor.routes import live, stats, status
 
-STATIC_DIR = "features/proxy-traffic-monitor/static"
-STATIC_URL = "/features/proxy-traffic-monitor/static"
-
-
 def mount(app: FastAPI) -> None:
     """Register this feature's routes and static assets onto the primary app.
 
-    The feature page lives at `/traffic`; the Workbench SPA owns `/`.
+    The Workbench SPA owns the `/traffic` page. This feature contributes only
+    the collector lifecycle and traffic REST/WebSocket endpoints.
     """
-    app.mount(STATIC_URL, StaticFiles(directory=STATIC_DIR), name="proxy_traffic_monitor_static")
     app.include_router(live.router)
     app.include_router(stats.router)
     app.include_router(status.router)
-
-    @app.get("/traffic", response_class=HTMLResponse)
-    async def _proxy_traffic_monitor_index():
-        return open(f"{STATIC_DIR}/index.html", encoding="utf-8").read()
 
 
 @asynccontextmanager

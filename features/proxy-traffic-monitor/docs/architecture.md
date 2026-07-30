@@ -1,4 +1,4 @@
-﻿# Proxy Traffic Monitor — 技术架构文档
+# Proxy Traffic Monitor — 技术架构文档
 
 ## 项目概述
 
@@ -47,22 +47,6 @@ features/proxy-traffic-monitor/
 │       ├── live.py               # WebSocket 实时推送
 │       ├── stats.py              # 统计查询 API
 │       └── status.py             # 连接状态 API
-├── static/                       # 前端静态资源（挂载在 /features/proxy-traffic-monitor/static）
-│   ├── index.html                # 入口页面（当前挂载在主应用的 `/`，见下方说明）
-│   ├── main.js                   # Vue 应用入口
-│   ├── App.js                    # Vue 根组件
-│   ├── style.css                 # 全局样式（含深色模式）
-│   ├── components/                # Vue 组件
-│   │   ├── StatusBar.js          # 状态栏 + KPI 卡片
-│   │   ├── LiveTable.js          # 实时连接表格
-│   │   ├── TrafficChart.js       # 流量趋势图表
-│   │   └── TopTable.js           # Top 排行表格
-│   ├── utils/                    # 前端工具函数
-│   │   ├── format.js             # 字节/速度/时间格式化
-│   │   └── labels.js             # 中文字段映射
-│   └── vendor/                   # 第三方库（本地）
-│       ├── chart.min.js          # Chart.js
-│       └── vue.esm-browser.prod.js  # Vue 3 ESM
 ├── tests/                        # 测试
 │   ├── conftest.py               # 路径配置（把本目录加入 sys.path）
 │   └── test_collector.py         # 采集器单元测试
@@ -74,7 +58,7 @@ features/proxy-traffic-monitor/
 └── README.md
 ```
 
-主应用如何挂载本功能：仓库根 `app/main.py` 在启动时把 `features/proxy-traffic-monitor/` 加入 `sys.path`，导入 `proxy_traffic_monitor` 包，调用 `proxy_traffic_monitor.mount(app)` 注册路由和静态资源，并在主应用的 `lifespan` 里用 `async with proxy_traffic_monitor.lifespan(app):` 包裹，让 Collector 的后台采集任务随主进程生命周期启停。
+主应用如何挂载本功能：仓库根 `app/main.py` 在启动时把 `features/proxy-traffic-monitor/` 加入 `sys.path`，导入 `proxy_traffic_monitor` 包，调用 `proxy_traffic_monitor.mount(app)` 注册流量 API 与 WebSocket 路由，并在主应用的 `lifespan` 里用 `async with proxy_traffic_monitor.lifespan(app):` 包裹，让 Collector 的后台采集任务随主进程生命周期启停。`/traffic` 的页面由 Workbench SPA 提供。
 
 ## 后端架构
 
@@ -100,7 +84,7 @@ features/proxy-traffic-monitor/
 
 #### `__init__.py` — 挂载接口
 - 不再是独立的 FastAPI 应用入口；暴露 `mount(app)` 和 `lifespan(app)` 两个函数供主应用（仓库根 `app/main.py`）显式调用。
-- `mount(app)`：挂载静态文件目录（`/features/proxy-traffic-monitor/static`）、注册 API 路由、注册 `/` 路由返回入口页面。
+- `mount(app)`：注册 API 与 WebSocket 路由；不再挂载静态资源或注册页面路由，`/traffic` 由 Workbench SPA history fallback 提供。
 - `lifespan(app)`：异步上下文管理器，启动时加载配置 → 初始化数据库 → 创建 Clash 客户端 → 启动采集器；退出时停止采集器 → 关闭数据库连接。主应用的 lifespan 用 `async with proxy_traffic_monitor.lifespan(app):` 包裹自己的逻辑来组合。
 
 #### `config.py` — 配置管理
@@ -152,7 +136,7 @@ features/proxy-traffic-monitor/
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/` | 前端页面 |
+| GET | `/traffic` | Workbench SPA 前端页面 |
 | GET | `/api/status` | 连接状态（connected, live_count） |
 | WS | `/ws/live` | 实时连接数据推送（每秒） |
 | GET | `/api/timeseries` | 流量趋势数据 |
@@ -161,6 +145,8 @@ features/proxy-traffic-monitor/
 | GET | `/api/export` | CSV 导出 |
 
 以上路径由 `mount(app)` 注册进主应用，与迁移前完全一致（结构迁移不改变路由语义）。`/` 会在 Phase 1 的 P1-12 任务实施后改为 `/traffic`（届时 `/` 交给 workbench SPA 总览页），这是单独批准的 Phase 1 工作，不随本次结构迁移变化。
+
+> 更新（2026-07-31）：页面入口 `/traffic` 已迁移到 Workbench SPA。`mount()` 现只注册本功能的 API 与 WebSocket；Collector、数据库与数据合同不因此改变。本段前的旧路由说明仅保留为结构迁移历史。
 
 ### 数据库表结构
 
@@ -342,13 +328,12 @@ python -m pytest features/proxy-traffic-monitor/tests -q
 ```
 
 ### 前端开发
-- 前端文件位于 `features/proxy-traffic-monitor/static/`，挂载在 `/features/proxy-traffic-monitor/static/`
-- 修改后刷新浏览器即可（无需构建）
-- Vue 组件使用 ESM 模块，浏览器原生支持
+- 前端视图位于 `frontend/src/views/TrafficView.vue`，随 Workbench Vite 构建输出到 `app/static/workbench/`
+- 修改后运行 `npm run build`，由 FastAPI 分发构建产物
 
 ## 视觉与交互设计提案（2026-07-31，待审查）
 
-页面继续作为 `/traffic` 的独立辅助功能，不迁移进 Workbench SPA 的 Vue Router，也不访问 Workbench 的会话、运行或统计存储。视觉可与工作台共享浅色/暗色主题、状态色、排版和留白，但组件、实时 WebSocket 与数据筛选仍保持本功能独立。
+页面仍作为 `/traffic` 的独立辅助功能，但 2026-07-31 经用户授权，视图迁移到 Workbench SPA 的 Vue Router，以复用左侧导航、主题令牌、图标和响应式布局。Collector、SQLite、REST/WebSocket 接口与 `mount()`/`lifespan()` 生命周期仍由本功能维护；页面不访问 Workbench 的会话、运行或统计存储。
 
 推荐的页面层级如下：
 

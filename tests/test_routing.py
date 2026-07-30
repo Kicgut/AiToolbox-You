@@ -44,25 +44,32 @@ def test_legacy_workbench_route_redirects_to_sessions():
     assert response.headers["location"] == "/sessions"
 
 
-def test_proxy_traffic_page_moved_to_traffic_and_links_back_to_overview():
-    response = client.get("/traffic")
+def test_proxy_traffic_page_is_served_by_the_workbench_spa_shell():
+    root = client.get("/", headers=HTML_HEADERS)
+    response = client.get("/traffic", headers=HTML_HEADERS)
 
     assert response.status_code == 200
-    assert 'href="/"' in response.text
-    assert "/features/proxy-traffic-monitor/static/main.js" in response.text
+    assert response.text == root.text
+    assert "/static/workbench/assets/" in response.text
 
 
 def test_reserved_segments_never_enter_spa_fallback():
     for path in (
         "/api/unknown",
         "/static/unknown.js",
-        "/traffic/unknown",
         "/ws/unknown",
         "/features/proxy-traffic-monitor/static/unknown.js",
     ):
         response = client.get(path, headers=HTML_HEADERS)
         assert response.status_code == 404, path
         assert response.headers["content-type"].startswith("application/json"), path
+
+
+def test_traffic_history_subpaths_are_left_to_the_spa_router():
+    response = client.get("/traffic/unknown", headers=HTML_HEADERS)
+
+    assert response.status_code == 200
+    assert "/static/workbench/assets/" in response.text
 
 
 def test_reserved_segment_matching_is_exact():

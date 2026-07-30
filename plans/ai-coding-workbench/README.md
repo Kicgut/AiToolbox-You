@@ -26,6 +26,7 @@
 | 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 实施中 | Phase 2 已完成 |
 | 4 | `04-automation-scheduler.md` | 多 Step 定时任务和恢复 | 待审查 | Phase 3 已完成 |
 | 5 | `05-cross-profile-migration.md` | 跨 profile 复制、分叉与回滚 | 待审查 | Phase 1、3、4 已稳定 |
+| UI-06 | `06-traffic-ui-unification.md` | 将代理流量前端统一进 Workbench SPA，后端功能边界保持独立 | 已完成 | 用户已明确授权；不依赖 Phase 4、5 |
 
 ## 审查流程
 
