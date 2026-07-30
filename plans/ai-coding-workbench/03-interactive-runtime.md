@@ -584,6 +584,8 @@ server request
 
 ## 15. P3-09：运行中心与浏览器体验
 
+> 2026-07-31 视觉设计提案：`docs/ai-coding-workbench-visual-design.md`。该提案用于固定运行中心的导航位置、分栏层级、状态表达和可访问性要求；不替代本节的 API、fake CLI、浏览器 E2E 或真实验收证据，也不代表任何 P3-09 条目已完成。
+
 ### 15.1 列表
 
 - [ ] 分组展示 queued/active/waiting approval/recent terminal。
