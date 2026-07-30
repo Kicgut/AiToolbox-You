@@ -1,7 +1,9 @@
 """Provider-neutral usage extraction from native JSONL events.
 
 The parser is deliberately tolerant: unknown records are skipped with a
-diagnostic instead of invalidating an entire transcript.
+diagnostic instead of invalidating an entire transcript. This mirrors the
+CC Switch v3.18 deduplication review principle while remaining an independent
+native-session implementation.
 """
 from __future__ import annotations
 
@@ -32,6 +34,11 @@ class UsageEvent:
     quality: str = "exact"
     counter_reset: bool = False
     dedup_key: str = ""
+    parent_turn_id: str | None = None
+    snapshot_sequence: int | None = None
+    role: str | None = None
+    cross_check: str | None = None
+    parser_semantics_version: str = "usage-semantics-v1"
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -54,7 +61,7 @@ def crosscheck_stats_cache(events: Iterable[UsageEvent], cache_payload: dict[str
     native = {key: sum((getattr(event, key) or 0) for event in events) for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")}
     cache_tokens = _find_tokens(cache_payload)
     mismatches = {key: {"native": value, "cache": cache_tokens[key]} for key, value in native.items() if cache_tokens[key] is not None and value != cache_tokens[key]}
-    return {"status": "match" if not mismatches else "mismatch", "mismatches": mismatches, "quality": "estimated" if mismatches else "exact", "source": "stats-cache-crosscheck"}
+    return {"status": "match" if not mismatches else "mismatch", "mismatches": mismatches, "cross_check": None if not mismatches else "cache_ahead" if any(v["cache"] > v["native"] for v in mismatches.values()) else "cache_behind", "source": "stats-cache-crosscheck"}
 
 
 def _tokens(value: Any) -> dict[str, int | None]:
@@ -118,8 +125,8 @@ def _parse_codex(lines: Iterable[str], source: str, session: str | None, version
         previous[scope] = raw
         identity = record.get("request_id") or record.get("requestId") or record.get("event_id") or record.get("id")
         fingerprint = json.dumps(values, sort_keys=True, separators=(",", ":"))
-        dedup = hashlib.sha256(f"codex|{session}|{branch}|{turn}|{identity}|{fingerprint}|{offset}".encode()).hexdigest()
-        stable = hashlib.sha256(f"codex|{session}|{branch}|{turn}|{identity}|{fingerprint}".encode()).hexdigest()
+        dedup = hashlib.sha256(f"codex|{session}|{branch}|{turn}|{identity}|request|{record.get('event_at') or record.get('timestamp')}|{fingerprint}|{version}".encode()).hexdigest()
+        stable = dedup
         if identity and stable in seen:
             continue
         if identity:
@@ -128,7 +135,9 @@ def _parse_codex(lines: Iterable[str], source: str, session: str | None, version
             str(record.get("request_id") or record.get("requestId")) if record.get("request_id") or record.get("requestId") else None,
             str(turn) if turn is not None else None, str(branch), None, record.get("event_at") or record.get("timestamp"),
             values["input_tokens"], values["output_tokens"], values["cache_read_tokens"], values["cache_creation_tokens"], values["reasoning_tokens"], values["total_tokens"],
-            f"{source}:{offset}", version, "estimated" if reset else "exact", reset, dedup))
+            f"{source}:{offset}", version, "estimated" if reset else "exact", reset, dedup,
+            str(record.get("parent_turn_id") or record.get("parentTurnId")) if record.get("parent_turn_id") or record.get("parentTurnId") else None,
+            int(record["snapshot_sequence"]) if isinstance(record.get("snapshot_sequence"), int) else None, None, None))
     return output, diagnostics
 
 
@@ -152,14 +161,17 @@ def _parse_claude(lines: Iterable[str], source: str, session: str | None, versio
         body = record.get("content") or record.get("message", {}).get("content", "") if isinstance(record.get("message"), dict) else record.get("content", "")
         fingerprint = hashlib.sha256(str(body).encode("utf-8", errors="replace")).hexdigest()
         tuple_text = json.dumps(tokens, sort_keys=True, separators=(",", ":"))
-        key = hashlib.sha256(f"claude|{message_id}|{role}|{fingerprint}|{tuple_text}".encode()).hexdigest()
+        workflow_id = record.get("workflow_id") or record.get("workflowId") or "main"
+        key = hashlib.sha256(f"claude|{message_id}|{role}|{workflow_id}|{fingerprint}|{tuple_text}".encode()).hexdigest()
         if message_id and key in seen:
             continue
         if message_id:
             seen.add(key)
         output.append(UsageEvent("claude", session, str(message_id) if message_id else None,
             str(record.get("request_id") or record.get("requestId")) if record.get("request_id") or record.get("requestId") else None,
-            None, None, str(record.get("workflow_id")) if record.get("workflow_id") else None, record.get("timestamp") or record.get("event_at"),
+            None, None, str(workflow_id), record.get("timestamp") or record.get("event_at"),
             tokens["input_tokens"], tokens["output_tokens"], tokens["cache_read_tokens"], tokens["cache_creation_tokens"], tokens["reasoning_tokens"], tokens["total_tokens"],
-            f"{source}:{offset}", version, "exact" if message_id else "estimated", False, key))
+            f"{source}:{offset}", version, "exact" if message_id else "estimated", False, key,
+            str(record.get("parent_turn_id") or record.get("parentTurnId")) if record.get("parent_turn_id") or record.get("parentTurnId") else None,
+            None, str(role) if role else None, None))
     return output, diagnostics

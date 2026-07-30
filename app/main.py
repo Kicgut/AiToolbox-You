@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,13 +15,31 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "features" / "proxy-traffic-monitor"))
 
 from app.api import ai_workbench  # noqa: E402
+from app.ai_workbench.execution.runtime_coordinator import RuntimeCoordinator  # noqa: E402
+from app.ai_workbench.storage import default_workbench_paths  # noqa: E402
 import proxy_traffic_monitor  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with proxy_traffic_monitor.lifespan(app):
-        yield
+        workers = int(os.environ.get("WEB_CONCURRENCY", os.environ.get("UVICORN_WORKERS", "1")))
+        if workers > 1:
+            # Interactive execution owns in-memory process handles, approval
+            # waiters and WebSocket queues.  Read-only Workbench routes remain
+            # usable, but execution is deliberately unavailable until an IPC
+            # runtime exists.
+            app.state.ai_workbench_runtime = None
+            app.state.ai_workbench_runtime_error = "unsupported_multi_worker_runtime"
+            yield
+            return
+        runtime = RuntimeCoordinator(default_workbench_paths(Path("data") / "ai_workbench").db_path)
+        runtime.start()
+        app.state.ai_workbench_runtime = runtime
+        try:
+            yield
+        finally:
+            runtime.stop()
 
 
 app = FastAPI(lifespan=lifespan)

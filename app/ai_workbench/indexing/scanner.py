@@ -15,6 +15,7 @@ from app.ai_workbench.indexing.profiles import DiscoveredProfile, discover_profi
 from app.ai_workbench.models import NormalizedEvent, NormalizedEventType, ToolKind
 from app.ai_workbench.storage import FTS_NOTICE_VERSION
 from app.ai_workbench.usage import parse_usage_lines
+from app.ai_workbench.merge import merge_decision
 
 PARSER_VERSION = 1
 
@@ -474,7 +475,15 @@ def _persist_usage(conn: sqlite3.Connection, tool: str, transcript: Path, native
         observation_id = hashlib.sha256(f"{event.source_locator}|{event.dedup_key}".encode()).hexdigest()
         payload_hash = hashlib.sha256(json.dumps(event.as_dict(), sort_keys=True).encode()).hexdigest()
         conn.execute("""INSERT OR IGNORE INTO observations(id,observation_kind,source,source_locator,native_session_id,native_event_id,request_id,tool,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (observation_id, "session", f"{tool}_jsonl", event.source_locator, native_session_id, event.native_event_id, event.request_id, tool, observed_at, payload_hash, event.quality, event.parser_version, "parsed", observed_at))
-        conn.execute("""INSERT OR IGNORE INTO usage_records(id,observation_id,dedup_key,event_kind,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,reasoning_tokens,total_tokens,counter_scope,counter_reset,event_at,recorded_at,source,quality,parser_version,merge_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (hashlib.sha256(event.dedup_key.encode()).hexdigest(), observation_id, event.dedup_key, "request_delta", event.input_tokens, event.output_tokens, event.cache_read_tokens, event.cache_creation_tokens, event.reasoning_tokens, event.total_tokens, "request", int(event.counter_reset), event.event_at, observed_at, f"{tool}_jsonl", event.quality, event.parser_version, "primary", observed_at))
+        merge_status = "primary"
+        if event.request_id:
+            prior = conn.execute("""SELECT u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,o.request_id,o.native_session_id
+                FROM observations o JOIN usage_records u ON u.observation_id=o.id
+                WHERE o.request_id=? LIMIT 1""", (event.request_id,)).fetchone()
+            if prior is not None:
+                decision = merge_decision(event.as_dict(), dict(prior))
+                merge_status = "duplicate" if decision.status == "duplicate" else "conflict" if decision.status == "conflict" else "primary"
+        conn.execute("""INSERT OR IGNORE INTO usage_records(id,observation_id,dedup_key,event_kind,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,reasoning_tokens,total_tokens,counter_scope,counter_reset,event_at,recorded_at,source,quality,parser_version,merge_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (hashlib.sha256(event.dedup_key.encode()).hexdigest(), observation_id, event.dedup_key, "request_delta", event.input_tokens, event.output_tokens, event.cache_read_tokens, event.cache_creation_tokens, event.reasoning_tokens, event.total_tokens, "request", int(event.counter_reset), event.event_at, observed_at, f"{tool}_jsonl", event.quality, event.parser_version, merge_status, observed_at))
 
 
 def _append_transcript_delta(conn: sqlite3.Connection, profile: DiscoveredProfile, transcript: Path, stat: os.stat_result) -> int | None:

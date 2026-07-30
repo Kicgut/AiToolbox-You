@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 5
 FTS_NOTICE_VERSION = 1
 LEGACY_BUSINESS_TABLES = {
     "manual_profile_roots",
@@ -25,7 +25,7 @@ LEGACY_BUSINESS_TABLES = {
 }
 
 
-DDL = [
+BASE_DDL = [
     """
     CREATE TABLE IF NOT EXISTS schema_meta (
         key TEXT PRIMARY KEY,
@@ -199,6 +199,9 @@ DDL = [
         tokenize = 'unicode61'
     )
     """,
+]
+
+PHASE2_STATISTICS_DDL = [
     """
     CREATE TABLE IF NOT EXISTS fts_settings (
         id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -281,6 +284,7 @@ DDL = [
         source TEXT NOT NULL, quality TEXT NOT NULL,
         request_count INTEGER, input_tokens INTEGER, output_tokens INTEGER,
         cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
+        reasoning_tokens INTEGER, total_tokens INTEGER,
         recorded_cost_minor INTEGER, estimated_cost_minor INTEGER, currency TEXT,
         source_watermark TEXT NOT NULL, rollup_version TEXT NOT NULL, rebuilt_at TEXT NOT NULL,
         data_revision TEXT, build_id TEXT,
@@ -332,6 +336,93 @@ DDL = [
     """,
 ]
 
+PHASE3_EXECUTION_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS runs (
+        id TEXT PRIMARY KEY, tool TEXT NOT NULL CHECK(tool IN ('codex', 'claude')),
+        client_request_id TEXT, request_body_hash TEXT,
+        profile_id TEXT NOT NULL, session_copy_id TEXT, source_native_session_id TEXT,
+        native_session_id TEXT, native_thread_id TEXT,
+        provider TEXT, account_ref TEXT, model TEXT, project_id TEXT, cwd TEXT,
+        mode TEXT NOT NULL CHECK(mode IN ('new', 'resume', 'fork')),
+        execution_path TEXT NOT NULL CHECK(execution_path IN ('codex_app_server', 'codex_exec', 'claude_step_process')),
+        permission_policy_json TEXT NOT NULL, budget_policy_json TEXT NOT NULL,
+        capabilities_snapshot_json TEXT NOT NULL DEFAULT '{}',
+        dispatch_state TEXT NOT NULL DEFAULT 'not_started', dispatch_committed_at TEXT,
+        runtime_instance_id TEXT, lease_generation INTEGER, cancel_requested_at TEXT,
+        retry_of_run_id TEXT, retry_of_step_id TEXT,
+        state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '', started_at TEXT,
+        finished_at TEXT, last_sequence_no INTEGER NOT NULL DEFAULT 0,
+        failure_code TEXT, failure_message TEXT, config_snapshot_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_steps (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+        prompt_text TEXT NOT NULL, state TEXT NOT NULL, native_turn_id TEXT,
+        started_at TEXT, finished_at TEXT, timeout_ms INTEGER, usage_event_id TEXT,
+        error_code TEXT, error_message TEXT, continue_on_error INTEGER NOT NULL DEFAULT 0,
+        attempt_no INTEGER NOT NULL DEFAULT 1, UNIQUE(run_id, ordinal),
+        FOREIGN KEY(run_id) REFERENCES runs(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS approval_requests (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT NOT NULL,
+        native_request_id TEXT NOT NULL, operation TEXT NOT NULL,
+        target_summary TEXT NOT NULL, risk_level TEXT NOT NULL,
+        command_argv_json TEXT, cwd TEXT, affected_paths_json TEXT, reason TEXT,
+        expires_at TEXT, state TEXT NOT NULL, decision TEXT,
+        decided_at TEXT, decided_by TEXT, disconnect_policy TEXT NOT NULL DEFAULT 'wait',
+        FOREIGN KEY(run_id) REFERENCES runs(id), FOREIGN KEY(step_id) REFERENCES run_steps(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_events (
+        event_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT, session_id TEXT,
+        sequence_no INTEGER NOT NULL, event_type TEXT NOT NULL, timestamp TEXT NOT NULL,
+        payload_json TEXT NOT NULL, source_tool TEXT NOT NULL, source_event_type TEXT,
+        raw_json TEXT, persisted_at TEXT NOT NULL, UNIQUE(run_id, sequence_no),
+        FOREIGN KEY(run_id) REFERENCES runs(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_stream_cursors (
+        run_id TEXT PRIMARY KEY, next_sequence_no INTEGER NOT NULL,
+        last_persisted_sequence_no INTEGER NOT NULL,
+        last_broadcast_sequence_no INTEGER NOT NULL, updated_at TEXT NOT NULL,
+        FOREIGN KEY(run_id) REFERENCES runs(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_writer_leases (
+        physical_session_key TEXT PRIMARY KEY, run_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+        acquired_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+        lease_generation INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS run_artifacts (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT,
+        kind TEXT NOT NULL, relative_path TEXT NOT NULL, sha256 TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL, mime_type TEXT, redaction_state TEXT NOT NULL,
+        created_at TEXT NOT NULL, expires_at TEXT,
+        FOREIGN KEY(run_id) REFERENCES runs(id), FOREIGN KEY(step_id) REFERENCES run_steps(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS real_execution_authorizations (
+        nonce_hash TEXT PRIMARY KEY, mode TEXT NOT NULL CHECK(mode IN ('p3_10')),
+        request_body_hash TEXT NOT NULL, allowed_tools_json TEXT NOT NULL,
+        model TEXT, budget_policy_json TEXT NOT NULL, max_uses INTEGER NOT NULL,
+        consumed_uses INTEGER NOT NULL DEFAULT 0, expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL, consumed_at TEXT
+    )
+    """,
+]
+
+DDL = BASE_DDL + PHASE2_STATISTICS_DDL + PHASE3_EXECUTION_DDL
+
 
 @dataclass(frozen=True)
 class WorkbenchPaths:
@@ -371,7 +462,23 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
     existing_tables = _table_names(conn)
     origin_schema_version = _read_schema_version(conn, existing_tables)
     if origin_schema_version == SCHEMA_VERSION:
+        # The version marker is written only after every additive migration
+        # commits.  Do not run CREATE/UPDATE repair statements here: opening a
+        # read connection must remain possible while a scanner owns SQLite's
+        # single writer slot.
+        required_tables = {
+            "observations", "usage_records", "daily_rollups", "pricing_snapshots",
+            "runs", "run_steps", "approval_requests", "run_events", "run_stream_cursors",
+            "session_writer_leases", "run_artifacts", "real_execution_authorizations",
+        }
+        if required_tables.issubset(existing_tables):
+            return conn
+        # A manually damaged/test fixture database can report the latest
+        # version while missing a CREATE IF NOT EXISTS table.  Repair only
+        # that exceptional case; ordinary concurrent readers stay read-only.
         _ensure_statistics_schema(conn)
+        _ensure_phase3_schema(conn)
+        conn.commit()
         return conn
 
     old_fts_count = _read_fts_count(conn, existing_tables)
@@ -380,6 +487,11 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
     )
     for stmt in DDL:
         conn.execute(stmt)
+    # Apply additive Phase 2 columns on both new and pre-existing schema paths.
+    # The full DDL is intentionally CREATE IF NOT EXISTS, so it cannot alter an
+    # already-created daily_rollups table by itself.
+    _ensure_statistics_schema(conn)
+    _ensure_phase3_schema(conn)
     _initialize_fts_settings(
         conn,
         is_new_instance=is_new_instance,
@@ -397,9 +509,104 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_phase3_schema(conn: sqlite3.Connection) -> None:
+    """Create the additive Phase 3 execution tables on every schema path."""
+    for stmt in PHASE3_EXECUTION_DDL:
+        conn.execute(stmt)
+    for column, definition in (
+        ("client_request_id", "TEXT"),
+        ("request_body_hash", "TEXT"),
+        ("source_native_session_id", "TEXT"),
+        ("native_thread_id", "TEXT"),
+        ("capabilities_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("dispatch_state", "TEXT NOT NULL DEFAULT 'not_started'"),
+        ("dispatch_committed_at", "TEXT"),
+        ("runtime_instance_id", "TEXT"),
+        ("lease_generation", "INTEGER"),
+        ("cancel_requested_at", "TEXT"),
+        ("retry_of_run_id", "TEXT"),
+        ("retry_of_step_id", "TEXT"),
+        ("updated_at", "TEXT"),
+    ):
+        _ensure_column(conn, "runs", column, definition)
+    conn.execute("UPDATE runs SET updated_at=created_at WHERE updated_at IS NULL")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_client_request ON runs(client_request_id) WHERE client_request_id IS NOT NULL")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_request_body ON runs(client_request_id, request_body_hash) WHERE client_request_id IS NOT NULL")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_native_request ON approval_requests(run_id, native_request_id)")
+
+
+RUN_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "interrupted"}
+RUN_TRANSITIONS = {
+    "queued": {"starting", "cancelled"},
+    "starting": {"running", "cancel_requested", "failed", "interrupted"},
+    "running": {"waiting_approval", "cancel_requested", "succeeded", "failed", "interrupted"},
+    "waiting_approval": {"running", "cancel_requested", "failed", "interrupted"},
+    "cancel_requested": {"cancelling", "succeeded", "interrupted"},
+    "cancelling": {"cancelled", "failed", "interrupted"},
+}
+
+
+def validate_run_transition(current_state: str, proposed_state: str) -> None:
+    """Validate one run state transition, raising ValueError for illegal edges."""
+    if proposed_state not in RUN_TRANSITIONS.get(current_state, set()):
+        raise ValueError(f"illegal run state transition: {current_state} -> {proposed_state}")
+
+
+class SessionBusyError(RuntimeError):
+    """Raised when another non-expired run owns a physical session writer lease."""
+
+    code = "session_busy"
+
+
+def acquire_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str, run_id: str,
+                         owner_id: str, now: str, expires_at: str) -> int:
+    """Acquire or take over an expired writer lease and return its generation."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT * FROM session_writer_leases WHERE physical_session_key = ?",
+                           (physical_session_key,)).fetchone()
+        if row is not None and row["expires_at"] >= now and row["run_id"] != run_id:
+            raise SessionBusyError("session_busy")
+        generation = (int(row["lease_generation"]) + 1) if row is not None else 1
+        conn.execute("""INSERT INTO session_writer_leases
+            (physical_session_key, run_id, owner_id, acquired_at, heartbeat_at, expires_at, lease_generation)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(physical_session_key) DO UPDATE SET run_id=excluded.run_id,
+            owner_id=excluded.owner_id, acquired_at=excluded.acquired_at,
+            heartbeat_at=excluded.heartbeat_at, expires_at=excluded.expires_at,
+            lease_generation=excluded.lease_generation""",
+            (physical_session_key, run_id, owner_id, now, now, expires_at, generation))
+        conn.commit()
+        return generation
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def heartbeat_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str,
+                           run_id: str, lease_generation: int, heartbeat_at: str,
+                           expires_at: str) -> None:
+    """Extend a lease only when its run and generation still own it."""
+    cur = conn.execute("""UPDATE session_writer_leases SET heartbeat_at=?, expires_at=?
+        WHERE physical_session_key=? AND run_id=? AND lease_generation=?""",
+        (heartbeat_at, expires_at, physical_session_key, run_id, lease_generation))
+    conn.commit()
+    if cur.rowcount != 1:
+        raise SessionBusyError("session_busy")
+
+
+def release_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str,
+                         run_id: str, lease_generation: int) -> None:
+    """Release a lease only for its current run and generation."""
+    conn.execute("""DELETE FROM session_writer_leases
+        WHERE physical_session_key=? AND run_id=? AND lease_generation=?""",
+        (physical_session_key, run_id, lease_generation))
+    conn.commit()
+
+
 def _ensure_statistics_schema(conn: sqlite3.Connection) -> None:
     """Install additive Phase 2 tables for databases already at schema v2."""
-    for stmt in DDL[-9:]:
+    for stmt in PHASE2_STATISTICS_DDL:
         conn.execute(stmt)
     for column, definition in (
         ("recorded_cost_minor", "INTEGER"),
@@ -409,8 +616,19 @@ def _ensure_statistics_schema(conn: sqlite3.Connection) -> None:
         ("cost_reason", "TEXT"),
     ):
         _ensure_column(conn, "usage_records", column, definition)
+    _ensure_column(conn, "observations", "native_turn_id", "TEXT")
     _ensure_column(conn, "daily_rollups", "data_revision", "TEXT")
     _ensure_column(conn, "daily_rollups", "build_id", "TEXT")
+    _ensure_column(conn, "daily_rollups", "reasoning_tokens", "INTEGER")
+    _ensure_column(conn, "daily_rollups", "total_tokens", "INTEGER")
+    for column, kind in {
+        "recorded_actual_source": "TEXT", "recorded_actual_quality": "TEXT",
+        "estimate_source": "TEXT", "estimate_quality": "TEXT", "pricing_snapshot_id": "TEXT",
+        "pricing_effective_at": "TEXT", "estimate_formula": "TEXT", "merge_status": "TEXT",
+        "conflict_group_id": "TEXT", "parser_version": "TEXT", "recorded_actual_currency": "TEXT",
+        "estimate_currency": "TEXT",
+    }.items():
+        _ensure_column(conn, "daily_rollups", column, kind)
     for column, definition in (("http_status", "INTEGER"), ("latency_ms", "INTEGER"), ("ttft_ms", "INTEGER"), ("recorded_cost_minor", "INTEGER"), ("recorded_cost_currency", "TEXT")):
         _ensure_column(conn, "observations", column, definition)
     for column, definition in (("current_phase", "TEXT NOT NULL DEFAULT 'queued'"), ("processed_items", "INTEGER NOT NULL DEFAULT 0"), ("total_items", "INTEGER NOT NULL DEFAULT 0"), ("progress_percent", "REAL NOT NULL DEFAULT 0")):

@@ -16,7 +16,7 @@ class MergeDecision:
 
 
 def merge_decision(left: dict[str, Any], right: dict[str, Any]) -> MergeDecision:
-    """Never merge weak matches; equal stable request identities are safe."""
+    """Classify stable and weak matches without deleting either observation."""
     request_left, request_right = left.get("request_id"), right.get("request_id")
     token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
     same_tokens = all(left.get(k) == right.get(k) for k in token_fields)
@@ -24,6 +24,11 @@ def merge_decision(left: dict[str, Any], right: dict[str, Any]) -> MergeDecision
         if same_tokens:
             return MergeDecision("duplicate", "count_primary_once", reason_code="same_request_same_tokens")
         return MergeDecision("conflict", "count_primary_only_until_review", conflict_group_id=f"conflict:{request_left}", reason_code="same_request_different_tokens")
+    token_pair_present = any(left.get(k) is not None and right.get(k) is not None for k in token_fields)
+    same_context = (left.get("session_id") or left.get("native_session_id")) == (right.get("session_id") or right.get("native_session_id"))
+    if same_context and left.get("model") == right.get("model") and left.get("event_at") and right.get("event_at") and not token_pair_present:
+        if abs((_parse(left["event_at"]) - _parse(right["event_at"])).total_seconds()) <= 2:
+            return MergeDecision("weak_match", "mark_only_count_independently", reason_code="weak_session_model_time_match")
     return MergeDecision("unmatched", "count_independently", reason_code="no_stable_identity")
 
 
