@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.ai_workbench.indexing import scanner
-from app.ai_workbench.storage import FTS_NOTICE_VERSION, connect_workbench_db
+from app.ai_workbench.storage import FTS_NOTICE_VERSION, SCHEMA_VERSION, connect_workbench_db
 
 
 def _legacy_v1_database(path, *, indexed_events: int) -> None:
@@ -58,7 +58,7 @@ def test_new_instance_starts_recommended_but_disabled(tmp_path, precreate_empty_
         "SELECT value FROM schema_meta WHERE key = 'schema_version'"
     ).fetchone()["value"]
 
-    assert schema_version == "2"
+    assert schema_version == str(SCHEMA_VERSION)
     assert status == {
         "consent_state": "recommended_pending",
         "indexing_enabled": False,

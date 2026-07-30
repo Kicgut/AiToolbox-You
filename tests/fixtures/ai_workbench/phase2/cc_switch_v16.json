@@ -1,0 +1,6 @@
+{
+  "schema_version": 16,
+  "redacted": true,
+  "tables": {"proxy_request_logs": ["id", "request_id", "provider", "ttft_ms"]},
+  "pricing_enabled": false
+}

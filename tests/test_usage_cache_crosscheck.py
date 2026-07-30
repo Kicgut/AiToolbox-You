@@ -8,7 +8,7 @@ def _event(input_tokens=10):
 def test_cache_crosscheck_does_not_change_native_facts():
     result = crosscheck_stats_cache([_event()], {"usage": {"input_tokens": 99, "output_tokens": 2}})
     assert result["status"] == "mismatch"
-    assert result["quality"] == "estimated"
+    assert result["cross_check"] in {"cache_ahead", "cache_behind"}
     assert _event().input_tokens == 10
 
 

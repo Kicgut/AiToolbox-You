@@ -13,7 +13,7 @@ from app.ai_workbench.indexing.scanner import (
     reconcile_sessions,
     scan_sessions,
 )
-from app.ai_workbench.storage import FTS_NOTICE_VERSION, connect_workbench_db
+from app.ai_workbench.storage import FTS_NOTICE_VERSION, SCHEMA_VERSION, connect_workbench_db
 
 
 def test_discover_profiles_from_env(monkeypatch, tmp_path):
@@ -104,7 +104,7 @@ def test_schema_version_is_recorded(tmp_path):
 
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
 
-    assert row["value"] == "2"
+    assert row["value"] == str(SCHEMA_VERSION)
 
 
 def test_manual_profile_and_fts_lifecycle(monkeypatch, tmp_path):

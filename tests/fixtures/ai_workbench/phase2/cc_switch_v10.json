@@ -1,0 +1,6 @@
+{
+  "schema_version": 10,
+  "redacted": true,
+  "tables": {"proxy_request_logs": ["id", "model", "status"]},
+  "pricing_enabled": false
+}
