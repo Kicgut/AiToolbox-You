@@ -5,6 +5,8 @@ import SessionListItem from '../components/SessionListItem.vue';
 import TimelineEvent from '../components/TimelineEvent.vue';
 import { useWorkbenchStore } from '../stores/workbench';
 import { pretty } from '../utils/event-rendering';
+import RunCenter from '../components/RunCenter.vue';
+import RunComposer from '../components/RunComposer.vue';
 
 const store = useWorkbenchStore();
 
@@ -121,6 +123,8 @@ function onSessionScroll(event: Event): void {
           />
         </div>
       </template>
+      <RunComposer />
+      <RunCenter />
     </section>
 
     <SessionInspector :detail="store.detail" :open="store.inspectorOpen" />

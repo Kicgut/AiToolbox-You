@@ -47,3 +47,52 @@ export type SearchStatus = {
   notice_version: number;
   indexed_events: number;
 };
+
+export type RunRow = {
+  id: string;
+  tool: 'codex' | 'claude';
+  state: string;
+  mode: 'new' | 'resume' | 'fork';
+  profile_id: string;
+  cwd: string | null;
+  model?: string | null;
+  last_sequence_no: number;
+  pending_approval_count?: number;
+  failure_code?: string | null;
+  failure_message?: string | null;
+  native_session_id?: string | null;
+  native_thread_id?: string | null;
+  execution_path?: string;
+  dispatch_state?: string;
+  updated_at?: string | null;
+};
+
+export type RunEvent = {
+  event_id: string;
+  sequence_no: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+};
+
+export type ApprovalRequest = {
+  id: string;
+  operation: string;
+  target_summary: string;
+  risk_level: string;
+  reason: string | null;
+  state: string;
+  expires_at: string | null;
+};
+
+export type ComposeRunRequest = {
+  action: 'new' | 'resume' | 'fork';
+  tool: 'codex' | 'claude';
+  profile_id: string;
+  cwd: string;
+  prompt: string;
+  model?: string | null;
+  permission_policy: Record<string, unknown>;
+  budget_policy: Record<string, unknown>;
+  session_copy_id?: string | null;
+  client_request_id?: string;
+};
