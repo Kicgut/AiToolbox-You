@@ -2,6 +2,8 @@
 import { Activity, ArrowDownToLine, ArrowUpFromLine, RadioTower } from '@lucide/vue';
 import { BarController, BarElement, CategoryScale, Chart, Legend, LinearScale, Tooltip } from 'chart.js';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import workbenchMark from '../assets/brand/you-mark.png';
+import emptyTraffic from '../assets/illustrations/empty-traffic.png';
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
@@ -127,6 +129,11 @@ const directionLabel = computed(() => ({ '': '全部', proxy: '代理', direct: 
 const visibleLive = computed(() => [...live.value, ...disconnected.value].filter(
   item => (!direction.value || item.direction === direction.value) && matchesLiveFilter(item)
 ));
+const trafficEmptyCopy = computed(() => status.value.connected === false
+  ? '本地连接器尚未连接。连接 Clash 或 Mihomo 后，这里会开始记录真实流量。'
+  : '当前筛选范围尚无历史流量。产生连接后，这里会显示真实数据。'
+);
+const showTrafficEmpty = computed(() => !error.value && (status.value.connected === false || !hasSeries.value));
 
 /** Draw the four real traffic series and replace the prior Chart.js instance. */
 function renderChart(buckets: TrafficBucket[]): void {
@@ -237,10 +244,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="traffic-page">
+  <section class="traffic-page page-frame">
     <header class="page-header">
       <div>
-        <p class="eyebrow">本地网络监控</p>
+        <p class="page-kicker">本地网络监控</p>
         <h1>代理流量监控</h1>
         <p>Clash / Mihomo 连接流量与实时连接。</p>
       </div>
@@ -271,7 +278,18 @@ onBeforeUnmount(() => {
             <select v-model="selectedApp" aria-label="应用筛选"><option value="">全部应用</option><option v-for="app in apps" :key="app" :value="app">{{ app }}</option></select>
           </div>
         </div>
-        <div class="traffic-canvas"><p v-if="loading" class="empty">加载中…</p><p v-else-if="!hasSeries" class="empty">当前范围尚无历史流量。连接产生流量后，这里会显示真实数据。</p><canvas v-else ref="chartCanvas" /></div>
+        <div class="traffic-canvas">
+          <div v-if="loading" class="state-message state-message--compact" role="status">
+            <img class="state-brand-mark" :src="workbenchMark" alt="" />
+            <span>正在加载流量数据…</span>
+          </div>
+          <div v-else-if="showTrafficEmpty" class="empty-state empty-state--traffic">
+            <img :src="emptyTraffic" alt="" />
+            <div><h3>{{ status.connected === false ? '连接器尚未连接' : '暂无历史流量' }}</h3><p>{{ trafficEmptyCopy }}</p></div>
+          </div>
+          <p v-else-if="error" class="empty">流量数据暂不可用，请稍后重试。</p>
+          <canvas v-else ref="chartCanvas" />
+        </div>
       </article>
 
       <article class="statistics-section">

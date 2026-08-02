@@ -1,1069 +1,473 @@
-# AI 编程工作台架构方案（讨论稿）
+# AI Coding Workbench 架构
 
-> 文档状态：Draft v0.1  
-> 更新日期：2026-07-23  
-> 当前范围：Codex CLI、Claude Code；为后续接入其他 AI 编程工具保留扩展点  
-> 目的：作为后续讨论的唯一方案文档。用户提出新建议后，继续在本文档中修订，确认后再拆分实施任务。
+> 状态：已确认架构基线
+> 更新时间：2026-08-01-22-27-51
+> 创建时间：2026-07-22-00-03-54
+> 适用范围：AI Coding Workbench 的产品定位、数据所有权、会话工作区、受控运行、自动任务、用量、迁移与模块边界
+> 不包含：具体 API、数据库迁移脚本、前端组件实现、真实模型请求或第三方工具写入
 
-## 1. 结论与核心决策
+> 架构状态：已根据 `docs/conversation-workspace-rethink.md` 的已确认决策重写。
+>
+> 本文定义目标架构、数据边界和产品语义；它不是“当前代码已经全部完成”的声明。实施范围、验收证据和阶段状态以 `plans/ai-coding-workbench/` 为准。
 
-本项目新增一个独立的“AI 编程工作台”大模块，形成以下完整链路：
+## 1. 定位
 
-```text
-会话发现与索引
-    ↓
-统一会话查看与搜索
-    ↓
-新建 / 续接 / Fork 会话
-    ↓
-结构化实时输出与审批
-    ↓
-多步骤提示词与定时任务
-    ↓
-用量、性能、稳定性和结果统计
-```
+AI Coding Workbench 是建立在 Codex、Claude Code 等既有 AI 编程工具之上的本地统一工作台。它提供跨工具会话浏览、继续对话、受控运行、自动任务、用量汇总和必要诊断；它不是第二套会话存储系统，也不是替代原生 CLI 的执行引擎。
 
-当前确定的架构原则：
+核心目标：
 
-1. **项目必须完全独立运行。** Cockpit Tools、CC Switch 均为可选数据源，不构成安装依赖。
-2. **原生会话文件是历史会话事实来源。** 本项目的 SQLite 只保存可重建索引、规范化事件和本项目产生的运行记录。
-3. **第三方目录默认只读。** 不写入 Cockpit Tools 或 CC Switch 的数据库、配置和锁文件。
-4. **先统一查看，再允许修改。** 第一阶段只做会话扫描、解析、搜索和展示；跨实例复制属于后续高风险功能。
-5. **实时输出优先使用结构化协议。** 不以屏幕抓取、ANSI 终端文本或持续 tail 文件作为主方案。
-6. **统计必须标明数据质量。** 每个指标标记为“精确”“估算”或“不可用”，不能把缺失数据当成 0。
-7. **前端升级为 Vue 3 + TypeScript + Vite。** 发布时仍可把构建产物随 FastAPI 一起分发，部署机器不需要 Node.js。
+1. 在一个工作台内浏览、检索和组织 Codex / Claude 原生会话。
+2. 在正确的原生工具中创建新会话、继续同一会话，或显式发起跨工具交接。
+3. 以人类可读的网页消息流展示对话，把原始协议和诊断降为按需能力。
+4. 提供计划任务、运行状态与最小必要审计。
+5. 汇总可靠的用量、订阅额度和账户余额信息，并显式标注来源和数据质量。
+6. 支持远程访问、显式迁移和设备交接，但不承诺多设备并发写入或自动合并同一原生会话。
 
-## 2. 已完成的技术验证
+非目标：
 
-### 2.1 本机工具能力
+- 不长期复制完整原生 transcript、每条原始事件、raw JSON 或常驻全文索引。
+- 不写入、移动或重排 Codex / Claude 原生会话文件。
+- 不伪装跨工具继续为 Resume；跨工具只能是显式 Handoff。
+- 不把 Clash 网络流量与模型 Token / 请求观测混为同一类统计。
+- 不依赖 CC Switch、Cockpit Tools 或其他外部软件才能工作。
 
-本机验证版本：
+## 2. 架构原则
 
-| 工具 | 本机版本 | 已验证能力 |
-|---|---:|---|
-| Codex CLI | 0.144.4 | `resume`、`exec --json`、`exec resume --json`、`app-server` |
-| Claude Code | 2.1.200 | `--resume`、`--continue`、`--fork-session`、`stream-json` 输入输出 |
+### 2.1 原生来源优先
 
-验证只执行了帮助命令、文件与数据库结构检查，没有向模型发送提示词，没有消耗 API 或订阅额度。
+Codex / Claude 的原生 JSONL transcript 是会话正文的唯一事实来源。Workbench 对它们只读，并只保存足够用于发现、列表、组织、受控运行和审计的轻量数据。
 
-另外已直接启动本机 `codex app-server`，通过 stdio 成功完成：
+### 2.2 轻量常驻，按需读取
 
-```text
-initialize → initialized → thread/list(limit=1) → thread/read(includeTurns=false)
-```
+列表、筛选和分组依赖轻量索引；打开会话、向上加载历史和全文搜索时才读取原生文件。长期存储的价值必须大于其磁盘、迁移和一致性成本。
 
-返回结果确认平台为 Windows，并成功只读取会话元数据；`includeTurns=false` 返回 `turns_count=0`。该验证没有调用 `thread/start` 或 `turn/start`，因此没有发生模型请求。
+### 2.3 一项事实，一个权威来源
 
-### 2.2 本机会话数据
+- 会话正文：原生 transcript。
+- Workbench 分组、收件箱、任务、运行和审计：Workbench 本地数据。
+- 账户余额和订阅额度：可核验的官方连接器或明确标注的外部来源。
+- Clash 网络流量：`features/proxy-traffic-monitor`。
+- CC Switch 代理请求观测：用量统计中的独立来源卡片，不进入默认会话总计。
 
-抽样扫描结果：
+### 2.4 深模块与适配 seam
 
-- Codex：`~/.codex/sessions/**/*.jsonl`，另有 `archived_sessions`、`session_index.jsonl`。
-- Claude Code：`~/.claude/projects/**/*.jsonl`，另有 `stats-cache.json`、子代理和附件记录。
-- 两者的 JSONL 均足以展示用户消息、AI 回复、工具调用、工具结果、命令输出和 token 信息。
-- 历史记录中通常没有可靠的账号邮箱或组织 ID，因此历史会话只能在有证据时归属账号。
+调用方只面对稳定、少量的 interface；工具差异、文件格式、事件映射、目录监听、连接器限流和降级逻辑封装在内部 implementation 中。Codex、Claude 和外部数据源通过 adapter 位于明确 seam，不让前端或通用存储依赖其私有 schema。
 
-### 2.3 CC Switch 本机数据
+### 2.5 未知必须可见
 
-本机已确认 CC Switch 的主数据库为：
+数值、能力和来源状态应明确区分 `exact`、`estimated`、`unavailable`、`stale`。不可用不是零；未确认的来源不能被显示为可靠余额、订阅额度或总用量。
+
+## 3. 信息架构
+
+左侧一级导航固定为：
 
 ```text
-~/.cc-switch/cc-switch.db
-```
-
-当前本机 **CC Switch 数据库** `PRAGMA user_version = 10`，包含：
-
-- `proxy_request_logs`
-- `usage_daily_rollups`
-- `session_log_sync`
-- `providers`
-- `provider_health`
-- `model_pricing`
-
-`proxy_request_logs` 已包含以下有价值字段：
-
-```text
-provider_id, app_type, model, request_model,
-input_tokens, output_tokens,
-cache_read_tokens, cache_creation_tokens,
-input_cost_usd, output_cost_usd, total_cost_usd,
-latency_ms, first_token_ms, duration_ms,
-status_code, error_message, session_id,
-provider_type, is_streaming, created_at, data_source
-```
-
-本机数据源包含：
-
-- `codex_session`
-- `session_log`
-
-当前 CC Switch 源码的数据库版本已经高于本机安装版本，说明其 schema 会持续演化。项目不得依赖固定列集合，更不能对 CC Switch 数据库执行迁移或写操作。
-
-本机安装版本为 3.15.0。2026-07-21 官方最新版本为 [3.18.0](https://github.com/farion1231/cc-switch/releases/tag/v3.18.0)，其数据库 schema 为 v16。这里的 v10/v16 都是 CC Switch 自身数据库版本，不是本项目数据库版本；当前不存在“本项目 schema v10 → v16”的迁移。
-
-本项目只读探测 CC Switch 版本和 schema，不负责升级、降级、重装、修复或调用其 updater。若版本差异影响兼容性，先向用户报告并建议用户通过 CC Switch 自身界面执行完整软件更新；用户更新完成后再重新探测。本规则同样适用于 Cockpit Tools、Codex CLI、Claude Code 和其他外部软件。连接器仍必须支持未安装、旧版本、当前版本和未知未来版本。
-
-因此本架构中的“升级”是升级本项目自己的 connector、parser、fixture 和归一化模型，使其兼容 CC Switch v10/v16；不是迁移 CC Switch 数据库。现有代理流量监控数据库（`features/proxy-traffic-monitor/data/traffic.db`，2026-07-24 起随仓库结构迁移调整路径，历史上曾位于 `proxy-traffic-monitor/data/traffic.db`）经只读检查为 `PRAGMA user_version = 0`，新的 Workbench 自有数据库尚未建立，将从 Phase 1 开始使用独立的 schema version。
-
-### 2.4 Cockpit Tools 本机状态
-
-本机 Cockpit Tools 与 CC Switch 均处于运行状态。Cockpit Tools 自身数据目录为：
-
-```text
-~/.antigravity_cockpit
-```
-
-其中包含账号、实例、配置、锁、备份和日志。该目录可能含凭据或账号快照，本项目默认不得读取无关文件，更不得写入。
-
-## 3. Codex App Server 是什么
-
-Codex App Server 是 Codex CLI 内置的本地集成协议进程，不是新的云服务，也不是 OpenAI API 的替代品。它使用当前 Codex CLI 的认证、配置、沙箱和本地会话，向富客户端提供：
-
-- 会话列举、读取、新建、续接和 Fork。
-- Turn 启动、中断和状态。
-- 消息增量、工具调用、文件变化等实时事件。
-- 命令与文件修改审批。
-- 模型、技能、MCP 等元数据。
-
-默认启动方式：
-
-```powershell
-codex app-server
-```
-
-默认通信方式为 stdin/stdout 上逐行 JSON-RPC/JSONL。官方文档说明客户端需要先发送 `initialize` 和 `initialized`，然后调用 `thread/start`、`thread/resume`、`turn/start` 等方法。
-
-### 3.1 是否需要额外下载
-
-不需要单独下载 App Server。只要所安装的 Codex CLI 包含 `codex app-server` 命令即可。本机已经验证存在。
-
-部署时执行能力探测：
-
-```text
-1. 查找 codex 可执行文件
-2. 执行 codex --version
-3. 执行 codex app-server --help
-4. 记录可用能力和 CLI 版本
-```
-
-旧版本没有 App Server 时，Codex 适配器自动降级为：
-
-```text
-codex exec --json
-codex exec resume <SESSION_ID> --json
-原生 JSONL 会话解析
-```
-
-### 3.2 使用边界
-
-官方 CLI 参考目前仍将 `codex app-server` 命令标为 Experimental，但 App Server 文档提供了稳定 API 子集，并要求未明确需要时不要启用 `experimentalApi`。
-
-因此采用以下策略：
-
-- 会话浏览、交互式续接和审批：优先 App Server 稳定方法。
-- 定时批处理：通过 `CodexAdapter` 封装，首版可使用稳定的 `codex exec --json`；后续可切换 Codex SDK。
-- 不把 App Server 的实验性 WebSocket 暴露给浏览器。
-- 后端持有 stdio 进程，并将事件转换为项目自己的稳定事件协议。
-- 所有 App Server 请求经过版本与能力协商，未知事件保留为 raw event，不让前端崩溃。
-
-官方资料：
-
-- <https://developers.openai.com/codex/app-server>
-- <https://developers.openai.com/codex/cli/reference>
-- <https://developers.openai.com/codex/noninteractive>
-
-## 4. 总体技术架构
-
-采用本地模块化单体：
-
-```text
-┌──────────────── Vue 3 SPA ────────────────┐
-│ 总览 │ 统计 │ 会话 │ 自动任务 │ 运行中心 │ 设置 │
-└───────────────────┬───────────────────────┘
-                    │ REST + WebSocket
-┌───────────────────▼───────────────────────┐
-│                FastAPI API                │
-├───────────┬───────────┬──────────┬────────┤
-│ Session   │ Execution │Scheduler │ Stats  │
-│ Service   │ Supervisor│ Worker   │Service │
-├───────────┴───────────┴──────────┴────────┤
-│ Adapter Registry + Normalized Event Bus   │
-├───────────────┬───────────────────────────┤
-│ CodexAdapter  │ ClaudeAdapter             │
-├───────────────┼───────────────────────────┤
-│ App Server /  │ stream-json / native      │
-│ exec JSONL    │ session logs              │
-└───────────────┴───────────────────────────┘
-          │                  │
-          ├── Native session files（默认只读索引）
-          ├── Workbench SQLite（唯一可写主库）
-          ├── CC Switch SQLite（可选、只读）
-          └── Cockpit config（可选、仅路径发现）
-```
-
-### 4.1 自有数据目录
-
-使用 `platformdirs` 生成独立目录，不复用任何第三方目录。例如 Windows：
-
-```text
-%LOCALAPPDATA%\StatisticsToolbox\ai-workbench\
-├── workbench.db
-├── logs\
-├── run-artifacts\
-├── backups\
-└── locks\
-```
-
-禁止把本项目数据库放进：
-
-- `~/.codex`
-- `~/.claude`
-- `~/.cc-switch`
-- `~/.antigravity_cockpit`
-
-## 5. 与 Cockpit Tools 共存且不冲突
-
-### 5.1 三种运行环境
-
-| 环境 | 行为 |
-|---|---|
-| 未安装 Cockpit Tools | 自动发现默认 Codex/Claude 目录，也允许手动添加实例目录 |
-| 已安装但未启用集成 | 与未安装完全相同，不读取 Cockpit 配置 |
-| 已安装且用户启用集成 | 只读读取允许列出的实例路径，不读取凭据，不调用 Cockpit 进程 |
-
-本项目不能通过 Cockpit Tools 的存在与否决定核心功能是否可用。
-
-### 5.2 目录和锁隔离
-
-- 本项目使用自己的数据库、备份目录、临时文件前缀和锁文件。
-- 不复用 Cockpit 的 `.cockpit-*` 临时文件名、垃圾箱或备份目录。
-- 不监听、不占用 Cockpit 内部服务端口。
-- 不修改 Cockpit 的 `codex_instances.json`、账号文件和锁文件。
-- 不注入 Cockpit 专用 header、provider 或认证投影。
-
-### 5.3 原生会话目录的并发规则
-
-会话扫描是只读操作，可以与 Cockpit 和 CLI 同时运行，但必须：
-
-- 以共享读方式打开文件。
-- 容忍最后一行仍在写入而 JSON 不完整。
-- 保存已解析 byte offset，只在换行完成后提交新事件。
-- 读取前后比较文件长度和 mtime；变化时重新验证尾部。
-- 对暂时被占用的文件指数退避，不将其标记为损坏。
-
-第一阶段不修改原生会话文件，因此不会与 Cockpit 的会话同步功能产生写冲突。
-
-### 5.4 后续跨实例复制的安全闸门
-
-跨账号/实例复制在后续阶段才启用，并满足：
-
-1. 用户显式选择源副本和目标实例。
-2. 显示目标供应商会收到原始会话内容的隐私提醒。
-3. 检测 Codex/Claude、Cockpit Tools 是否正在对相关实例执行写操作。
-4. 对源、目标计算内容哈希和 mtime 前置条件。
-5. 创建本项目自己的可恢复备份和操作日志。
-6. 临时文件写完、fsync 后原子替换。
-7. 替换前再次检查哈希，发现变化立即终止，不覆盖。
-8. 成功后重新索引并验证目标 CLI 能读取。
-
-检测到 Cockpit 正在运行时，不必禁止所有功能；只阻止涉及共享目录写入的迁移操作。即使 Cockpit 未运行，也必须执行哈希前置条件，因为其他 CLI 仍可能写入。
-
-## 6. 更完整的统一会话模型
-
-### 6.1 不把“Session ID 相同”等同于“内容相同”
-
-Cockpit 的同步会使同一个 Codex Session ID 出现在多个实例中。复制后各副本还可能分别继续，从而发生分叉。因此统一模型分为两层：
-
-```text
-ConversationFamily（逻辑会话族）
-    ├── SessionCopy A：Codex / profile-1 / rollout-A
-    ├── SessionCopy B：Codex / profile-2 / rollout-B
-    └── SessionCopy C：迁移后发生分叉
-```
-
-物理副本唯一键：
-
-```text
-(tool, profile_root, native_session_id, transcript_path)
-```
-
-逻辑会话族不是简单按 Session ID 强制合并，而是结合：
-
-- 工具类型。
-- 原生 Session ID。
-- 初始事件指纹。
-- 共同事件前缀。
-- 显式 fork/clone 关系。
-
-当同 ID 内容不一致时，状态显示：
-
-- `in_sync`：内容一致。
-- `ahead`：一个副本是另一个的严格后继。
-- `diverged`：双方都出现不同的新事件。
-- `unknown`：无法安全判断。
-
-UI 不静默拼接分叉内容。用户需要选择查看某个副本、查看差异或显式创建新 Fork。
-
-### 6.2 账号归属可信度
-
-账号归属字段：
-
-```text
-account_ref
-account_source     # execution / isolated_profile / external_registry / inferred / unknown
-account_confidence # exact / likely / unknown
-```
-
-规则：
-
-- 由本项目启动的会话：记录启动时实际 profile，标为 `exact`。
-- 位于用户明确登记的隔离配置目录：标为 `likely` 或 `exact`，取决于是否有非敏感账号标识。
-- 只从历史 JSONL 推断：不显示具体账号，标为 `unknown`。
-- 不读取或保存第三方明文 token 来提高归属率。
-
-### 6.3 项目归一化
-
-不同工具对项目路径的编码不同，统一保存：
-
-- 原始 cwd。
-- 规范化绝对路径。
-- 大小写归一后的 Windows 路径键。
-- Git repository root。
-- remote URL 的脱敏形式。
-- branch/worktree 信息。
-- 路径是否仍存在。
-
-同一仓库的多个 worktree 保持独立工作目录，同时归属于同一个 Repository。
-
-“大小写归一后的 Windows 路径键”是首个正式版本的 Windows 规范，不是跨平台通用路径规则。未来正式支持 Linux 时，必须单独定义并验证大小写敏感、符号链接和文件身份语义，不得直接套用 Windows 路径归一化行为。
-
-### 6.4 会话类型和关系
-
-统一支持：
-
-- 主会话。
-- Fork 会话。
-- Resume 续接。
-- 子代理/子任务会话。
-- 导入副本。
-- 归档会话。
-- 已丢失或移动 transcript 的孤立索引。
-
-通过 `session_relations` 保存：
-
-```text
-parent, forked_from, resumed_from, cloned_to, subagent_of, imported_from
-```
-
-### 6.5 建议数据表
-
-```text
-tool_profiles
-accounts
-repositories
-projects
-conversation_families
-session_copies
-session_relations
-turns
-events
-usage_records
-source_checkpoints
-automations
-automation_steps
-runs
-run_steps
-approval_requests
-external_connectors
-```
-
-关键字段：
-
-#### `tool_profiles`
-
-```text
-id, tool, display_name, config_root, session_root,
-provider, account_ref, discovery_source,
-capabilities_json, enabled, last_probe_at
-```
-
-#### `session_copies`
-
-```text
-id, family_id, tool, native_session_id, profile_id,
-project_id, transcript_path, transcript_kind,
-title, model, provider, kind,
-created_at, updated_at, archived_at,
-content_hash, head_event_hash, parse_version,
-account_source, account_confidence,
-index_status, divergence_status
-```
-
-#### `events`
-
-```text
-id, session_copy_id, turn_id, sequence_no,
-event_type, role, timestamp,
-text_content, structured_json, raw_json,
-source_offset, content_hash, redaction_state
-```
-
-原始事件可选保留。默认只保留解析所需字段和文件 offset；用户开启“本地全文索引”后再写入全文及 FTS5。
-
-## 7. 会话发现、索引与解析
-
-### 7.1 Profile 发现顺序
-
-本节的 Profile 指 Workbench 层的 `tool_profiles` 抽象（配置根目录 + 会话根目录组合），不是 Codex 自己的原生 `--profile` 配置切换机制——两者粒度不同，且 Claude 没有对应的原生 profile 机制，见 `CONTEXT.md` Profile 词条。
-
-1. 用户手动登记的实例目录。
-2. 默认环境变量：`CODEX_HOME`、`CLAUDE_CONFIG_DIR`。
-3. 默认用户目录：`~/.codex`、`~/.claude`。
-4. 本项目曾经启动过的 profile。
-5. 用户明确启用后，从 Cockpit 配置中只读发现额外路径。
-
-发现只是候选；每个目录必须通过工具特征文件验证，禁止把任意用户目录递归当作会话目录。
-
-### 7.2 增量索引
-
-每个 transcript 保存：
-
-```text
-path, file_identity, size, mtime, parsed_offset,
-last_complete_line_offset, prefix_hash, tail_hash, parser_version
-```
-
-工作方式：
-
-- 当前实现使用周期 polling reconcile 检测并索引变化，尚未接入操作系统原生文件系统 watcher。
-- 文件系统 watcher 是后续可选的低延迟增强；引入后仍以周期 reconcile 修复漏报、网络盘或系统休眠造成的事件丢失。
-- 首个正式版本只要求在 Windows 验证索引行为；Linux watcher 或 inotify 适配不在当前兼容性承诺和验收范围内。
-- append-only 文件只解析新增完整行。
-- 文件缩短、替换或哈希不匹配时重新解析。
-- parser 升级时按版本选择性重建。
-- 单个损坏事件降级为 `raw_unknown`，不丢弃整个会话。
-
-### 7.3 解析器输出
-
-Codex 和 Claude 解析器统一产生：
-
-- `user.message`
-- `assistant.message`
-- `reasoning.summary`
-- `tool.started`
-- `tool.completed`
-- `command.output`
-- `file.changed`
-- `usage.snapshot`
-- `error`
-- `unknown`
-
-内部 schema 随 CLI 版本演化，解析器必须 fixture 化测试，并按 `cli_version + event shape` 选择兼容分支。
-
-## 8. 会话内容前端设计
-
-### 8.1 页面结构
-
-桌面端采用三栏工作区，而不是多层卡片：
-
-```text
-┌──────────────┬──────────────────────────┬──────────────┐
-│ 会话列表/筛选 │ 对话时间线                │ 会话检查器    │
-│              │                          │ 元数据        │
-│ 工具         │ User                     │ 用量          │
-│ 账号         │ Assistant                │ 文件          │
-│ 项目         │ Tool / Diff / Output     │ 分支/副本     │
-│ 状态         │                          │ 原始来源      │
-│ 搜索         │ 固定输入栏                │              │
-└──────────────┴──────────────────────────┴──────────────┘
-```
-
-- 左栏支持按工具、账号可信度、项目、模型、时间、归档、分叉状态筛选。
-- 中栏使用虚拟滚动，按 Turn 懒加载。
-- 右栏是可折叠检查器，不使用阻断式 modal。
-- 窄屏变为“列表路由 → 会话路由 → 检查器抽屉”。
-
-### 8.2 消息展示
-
-- 用户消息：保留文本、附件和发送时间。
-- AI 消息：Markdown、代码高亮、复制、锚点链接。
-- Reasoning：只展示工具实际提供且允许展示的摘要，默认折叠。
-- Tool：显示工具名、状态、耗时、输入摘要和结果摘要。
-- Command：stdout/stderr 分流、长输出折叠、ANSI 可选解析。
-- Diff：文件级折叠、行内/并排切换，大文件虚拟化。
-- Unknown：显示“当前版本暂不识别”，允许展开原始 JSON。
-
-### 8.3 状态和空页面
-
-必须区分：
-
-- 首次未扫描：引导添加目录或开始扫描。
-- 扫描中：骨架列表及进度，不用全页 spinner。
-- 没有会话：解释会话会从哪里出现，并提供“新建会话”。
-- 文件不可访问：显示路径、原因和重试。
-- 会话正在被其他进程写入：显示“实时更新中”，而不是报错。
-- 解析器不兼容：保留 raw view，并提示升级适配器。
-
-## 9. 新建、续接、Fork 与多步骤提示词
-
-### 9.1 工具适配器接口
-
-Phase 3 已定义以下受限映射：对于由 Workbench 新建或 Fork 的 Codex App Server run，`thread/start` / `thread/fork` 返回的 `threadId` 同时记录为该 run 的 `native_thread_id` 与 `native_session_id`；它只说明本次受监管运行拥有的 native 身份，不会反向修改或猜测既有 JSONL transcript 的 ID。Resume/Fork 的输入必须来自已索引 `session_copy_id` 的 `native_session_id`，禁止使用“最近会话”推断。Claude 的 native session ID 则只从其 stream-json init/result 记录提取。
-
-Phase 3 的产品 run 固定为单回合：一个 Workbench Run 只有一个 Step，对应一次原生 Turn；多 Step 编排属于 Phase 4。所有状态、事件和 cursor 在同一 SQLite 事务提交后才广播。部署仅支持一个 FastAPI worker 和一个 Runtime Coordinator；Coordinator 统一拥有进程树、timeout、writer lease、审批 waiter 与进程内 WebSocket fan-out。连接过程采用先订阅、后 cursor replay、按 `(run_id, sequence_no)` 去重的顺序，断线重连以 SQLite 为事实源。
-
-原生 command/file approval 是一次性双向桥：server request 先持久化为 `pending`，浏览器决定后进入 `responding`，只有 JSON-RPC response 实际写入同一 App Server stdin 才成为 accepted/declined/cancelled；写入失败标记 `delivery_failed`。浏览器断开不会改变 pending 状态，服务重启时失联 run 统一进入 `interrupted`。
-
-```text
-probe()
-discover_profiles()
-list_sessions()
-read_session()
-start_session(options)
-resume_session(session, options)
-fork_session(session, options)
-start_turn(prompt, options)
-cancel_turn()
-respond_approval()
-stream_events()
-```
-
-前端和调度器只能调用统一适配器，不能拼接 shell 命令字符串。后端使用 argv 数组启动进程，prompt 通过 stdin 或协议字段传递。
-
-### 9.2 Codex
-
-优先级：
-
-```text
-App Server stable methods
-    ↓ 不可用
-codex exec / exec resume --json
-    ↓ 仅查看
-native session parser
-```
-
-### 9.3 Claude Code
-
-执行方式：
-
-```text
-claude -p --output-format stream-json --include-partial-messages
-claude -p --resume <SESSION_ID> ...
-```
-
-多轮常驻执行可使用 `--input-format stream-json`；首版也可以每个 Step 启动一个明确的 resume 进程，以换取更简单的故障隔离。
-
-### 9.4 多步骤语义
-
-“多句提示词，每句独立”定义为有序 Step，而不是一次拼接成大 prompt：
-
-```text
-Automation Run
-  ├── Step 1 → 原生 Turn 1
-  ├── Step 2 → 原生 Turn 2
-  └── Step 3 → 原生 Turn 3
-```
-
-每个 Step 独立保存：
-
-- prompt。
-- 是否启用。
-- 前置延迟。
-- timeout。
-- retry。
-- 失败后停止/继续。
-- 模型、权限和预算覆盖。
-- 运行状态、实际输出和 usage。
-
-只有前一个 Turn 明确结束后才提交下一句。同一物理 Session 同时只能存在一个 writer lease。
-
-## 10. 实时输出与进程监管
-
-### 10.1 统一事件协议
-
-```text
-run.started
-run.status_changed
-turn.started
-message.delta
-message.completed
-reasoning.summary
-tool.started
-tool.output
-tool.completed
-file.changed
-approval.required
-approval.resolved
-usage.updated
-diagnostic.stderr
-run.completed
-run.failed
-run.cancelled
-```
-
-每个事件包含：
-
-```text
-event_id, run_id, step_id, session_id,
-sequence_no, timestamp, type, payload,
-source_tool, source_event_type
-```
-
-### 10.2 数据路径
-
-```text
-CLI stdout JSONL / App Server stdio
-              ↓ 增量逐行解析
-Normalized Event Bus
-       ├── SQLite 持久化
-       ├── WebSocket 推送
-       └── 指标聚合
-
-CLI stderr → diagnostic.stderr，绝不和 stdout JSON 混合解析
-```
-
-浏览器断线重连时携带最后收到的 `sequence_no`，后端先补发缺失事件，再继续实时流。
-
-### 10.3 Windows 进程生命周期
-
-本节是首个正式版本的规范实现，不是等待 Linux 等价方案补齐的临时平台分支。首版的进程监管、取消和子进程树清理仅以 Windows 为正式支持与验收目标；实现边界可为未来平台适配保留抽象，但不因此形成 Linux 兼容性承诺。
-
-- 使用独立 process group。
-- 使用 Job Object 管理子进程树，避免取消后遗留 shell、MCP 或工具进程。
-- 支持温和中断、超时后强制终止两阶段策略。
-- 限制单运行内存事件缓冲，完整记录落盘，WebSocket 使用背压。
-- 应用重启后，将失联的 `running` 任务恢复为 `interrupted`，然后按策略重试或等待用户确认。
-
-### 10.4 原始终端模式
-
-PTY/ConPTY + xterm.js 只作为高级“原始终端”模式，用于无法结构化表达的交互式 TUI。自动任务、统计和默认会话界面不依赖 PTY。
-
-## 11. 定时任务与恢复
-
-### 11.1 调度状态机
-
-```text
-scheduled → queued → claimed → starting → running
-                                         ├── waiting_approval
-                                         ├── succeeded
-                                         ├── failed
-                                         ├── cancelled
-                                         └── interrupted
-
-scheduled → missed
-```
-
-### 11.2 可靠性设计
-
-- SQLite 是调度事实来源，内存 scheduler 只负责唤醒。
-- Worker 使用带过期时间的 lease 领取任务。
-- 幂等键：`(automation_id, scheduled_at, step_no, attempt)`。
-- 支持一次性、Cron、时区和夏令时。
-- 休眠/停机错过任务时提供：跳过、立即补跑、等待确认。
-- 支持任务级和工具/profile 级并发上限。
-- 支持最大运行时间、最大预算、最大重试和指数退避。
-- 默认权限为安全模板；不得继承 `codex-auto.cmd` 中的危险绕过模式。
-
-### 11.3 审批
-
-- 有前端用户在线：通过运行中心处理 `approval.required`。
-- 无人值守：只允许预先保存的权限模板自动处理有限操作。
-- 超出模板：保持 `waiting_approval`，到期失败或暂停。
-- 每次批准保存批准人、时间、请求摘要和决定。
-
-### 11.4 应用未运行和电脑休眠
-
-首版要求 FastAPI 后台服务运行。后续增加：
-
-- 开机自启/托盘。
-- Windows 服务模式。
-- 可选 Windows Task Scheduler 桥接，用于唤醒和启动工作台 worker。
-
-上述生命周期方案以 Windows 首版为范围，不同期承诺 systemd、Linux daemon 或其他平台等价实现；未来正式支持 Linux 时另行设计并纳入对应测试矩阵。
-
-## 12. 统计架构与 CC Switch 可选集成
-
-### 12.1 数据源优先级
-
-统计不是简单“有 CC Switch 就全部读取、没有就少展示”，而是统一指标模型、多来源补充：
-
-| 优先级 | 数据源 | 作用 |
-|---:|---|---|
-| 1 | 本项目监管的运行事件 | 精确运行时间、TTFT、退出状态、审批和重试 |
-| 2 | CC Switch 代理请求日志（可选） | 外部运行的 HTTP 状态、供应商、TTFT、延迟和已记录成本 |
-| 3 | Codex/Claude 原生会话日志 | 所有部署都可获得的 token、会话、消息和工具调用基线 |
-| 4 | 价格表推算 | API 等效估算成本，不冒充实际账单 |
-
-本项目始终实现自己的原生会话解析，因此不会因为服务器未安装 CC Switch 而失去基础统计。
-
-### 12.2 CC Switch 只读连接器
-
-连接器流程：
-
-```text
-detect ~/.cc-switch/cc-switch.db
-    ↓
-SQLite URI mode=ro + 短事务 + busy_timeout
-    ↓
-PRAGMA user_version + sqlite_master + table_info
-    ↓
-按实际存在的列构建兼容查询
-    ↓
-映射到 Workbench UsageRecord
-```
-
-约束：
-
-- 绝不执行 DDL、PRAGMA journal 修改、migration、VACUUM 或写入。
-- 不读取 providers 中的凭据型配置 JSON。
-- 只读取统计所需白名单列。
-- 数据库忙、损坏或 schema 不兼容时立即关闭连接器，回退自有解析。
-- 数据库路径可配置，自动发现只是默认值。
-- UI 显示连接状态、schema version、最后成功同步时间和错误原因。
-
-### 12.3 避免重复统计
-
-CC Switch 会把原生 session log 导入自己的 `proxy_request_logs`。如果本项目同时解析原生日志，再把这些行全部导入，会造成双重计数。
-
-规则：
-
-- `data_source = session_log / codex_session / gemini_session`：默认不作为额外 usage 导入，只用于交叉校验或解析器回退。
-- `data_source = proxy`：作为代理观测数据导入，可补充 TTFT、HTTP 状态、provider 和实际记录成本。
-- 无 `data_source` 的旧 schema：按 CC Switch 历史语义视为 `proxy`，但必须标记来源版本。
-- 以 `request_id` 为第一去重键；缺失时使用工具、session、时间窗口、模型和 token 指纹。
-- 一个逻辑请求可同时拥有 `session_observation` 和 `proxy_observation`，聚合时只计一次 token，但允许代理观测补充性能字段。
-
-### 12.4 有无 CC Switch 时的展示一致性
-
-统计页面保持相同的信息架构，不因外部工具缺失而整页改变。字段根据数据质量显示：
-
-| 指标 | 无 CC Switch 的历史会话 | 本项目监管的新运行 | 有 CC Switch 代理数据 |
-|---|---|---|---|
-| 输入/输出 token | 精确或解析可得 | 精确 | 精确 |
-| cache read/create | 工具有记录时精确 | 精确或工具可得 | 精确 |
-| 会话/Turn/工具调用 | 精确 | 精确 | 精确 |
-| 估算成本 | 可计算 | 可计算 | 可计算 |
-| 实际记录成本 | 通常不可用 | API 返回时可用 | CC Switch 已记录时可用 |
-| 总耗时 | 文件时间推断/不可用 | 精确 | 精确 |
-| 首字延迟 TTFT | 不可用 | 精确 | 精确 |
-| HTTP 状态码 | 不可用 | 错误事件可得时部分可用 | 精确 |
-| provider/account | 推断或未知 | 启动配置精确 | provider 通常精确 |
-| 退出码/取消/审批 | 不可用 | 精确 | CC Switch 不负责此项 |
-
-UI 约定：
-
-- `精确`：实心数据质量标记。
-- `估算`：显示 `≈`，悬停解释依据。
-- `不可用`：显示 `—`，不显示 `0`。
-- 图表维度缺失时保留布局，并显示“该时间段没有此类观测来源”。
-
-### 12.5 核心统计指标
-
-#### 用量与成本
-
-- input/output/cache read/cache create token。
-- 会话数、Turn 数、prompt 数、活跃天数。
-- 工具、账号、profile、项目、模型、provider 分组。
-- API 实际记录成本与 API 等效估算成本分开。
-- 订阅登录模式不得把估算成本称为账单。
-
-#### 性能
-
-- 端到端耗时。
-- TTFT。
-- 输出 token/s。
-- 工具调用耗时。
-- scheduler 排队时间、启动时间偏差。
-
-#### 稳定性
-
-- completed/failed/cancelled/interrupted。
-- CLI exit code。
-- 401/403/429/5xx。
-- resume 失败。
-- 重试率。
-- approval 等待、拒绝和超时。
-- scheduled/missed/on-time。
-
-#### 工作模式
-
-- 平均 Turn/session。
-- 每项目会话量。
-- 活跃时段和连续工作时长。
-- 工具调用类别。
-- 命令数量、文件修改数、diff 行数。
-- fork/resume 次数和会话寿命。
-
-#### 结果代理指标
-
-- test/build/lint 命令退出状态。
-- commit/PR 仅在实际观察到时统计。
-- 用户重试、撤销或立即追加修复提示词。
-
-进程退出为 0、AI 声称完成，均不能单独定义为“任务成功”。
-
-## 13. 前端工程与信息架构
-
-### 13.1 工程升级
-
-当前浏览器直引 Vue ESM 适合单页流量面板，但新增模块需要路由、复杂状态、虚拟列表、实时事件恢复和可测试组件。
-
-建议：
-
-- Vue 3 + TypeScript + Vite。
-- Vue Router。
-- Pinia 管理 profile、过滤器、运行状态和连接状态。
-- REST 查询与 WebSocket 事件分层。
-- Markdown、代码高亮、diff、虚拟列表组件。
-- 构建产物输出到 FastAPI 静态目录。
-
-开发环境需要 Node.js；发布包和部署服务器只运行已经构建好的静态资源，继续保持 Python 一键启动体验。
-
-### 13.2 主导航与信息架构落地
-
-原方案导航结构：
-
-```text
-总览
-用量统计
+总览（默认）
 会话
 自动任务
-运行中心
-代理流量（现有功能）
+用量统计
+
+────────────
+
+代理流量
 设置
 ```
 
-Phase 1 首次实现时未落地这一结构：根路径 `/` 保留了旧代理流量页面，新会话中心挂在 `/workbench`，两者用普通超链接连接，不受 Vue Router 管理。2026-07-23 架构复审确认这是与本节原意不符的实现偏差，并确认以下落地方式：
+“运行中心”和“运维”不再作为一级页面：
 
-- **workbench SPA 是前端主壳**，浏览器根路径 `/` 直接进入 workbench，不再是代理流量页面。
-- **“总览”是 workbench 默认首页路由**，首版只做功能入口卡片：跳转到会话中心、代理流量，并为用量统计、自动任务、运行中心、设置预留位置。首版总览不嵌入统计类小部件；是否需要小部件，等对应功能页上线后再评估。
-- **代理流量监控作为“现有功能”迁移为可跳转子页面**，不再占用根路径。2026-07-31 经用户明确授权，`/traffic` 的前端改为 Workbench SPA 内的 Vue Router 路由并复用应用外壳；其 Collector、SQLite、Clash/Mihomo 连接、REST/WebSocket API 和 `mount()`/`lifespan()` 后端边界继续保留在 `features/proxy-traffic-monitor/`，不并入 `app/ai_workbench`。
+- 运行中的事项进入总览的待处理区、自动任务页和会话内状态。
+- 原始事件、协议 payload、stderr、工具完整输出、审批和进程诊断进入会话详情的高级诊断抽屉。
+- 数据源健康、连接器配置和远程访问设置进入设置或用量统计。
 
-### 13.3 统计页面
+### 3.1 总览
 
-- 顶部常驻筛选：日期、工具、账号/profile、项目、模型、provider、数据来源。
-- KPI 条：token、Turn、估算/实际成本、缓存命中、完成率。
-- 趋势区：token/成本/请求，可切换而不堆叠过多图表。
-- Breakdown 表：项目、模型、provider、账号。
-- 可靠性区：错误、重试、错过任务、审批等待。
-- 每张图表可展开“数据来源与质量”。
-
-### 13.4 自动任务页面
-
-- 列表与日历切换。
-- 行内编辑任务状态和下一次运行时间。
-- 任务详情采用页面/侧栏，不把复杂编辑塞进 modal。
-- Step 编辑器支持拖动排序、逐步启用、单步测试和 dry-run 命令预览。
-
-### 13.5 运行中心
-
-- 当前运行、等待审批、最近完成三组。
-- 结构化流、原始 stdout、stderr 三种视图。
-- 支持暂停后续 Step、取消进程、批准/拒绝请求。
-- 浏览器刷新后可恢复运行画面。
-
-### 13.6 视觉和交互原则
-
-- 延续现有工具型产品的深浅主题和紧凑信息密度。
-- 使用统一语义状态色，不以工具品牌色替代成功/警告/错误。
-- 避免层层嵌套卡片；会话和运行中心使用分栏、工具栏和表格。
-- 所有控件覆盖 default、hover、focus、active、disabled、loading、error。
-- 加载使用骨架，空状态解释下一步。
-- 动效只表达状态变化，支持 `prefers-reduced-motion`。
-- 正文和控件满足 WCAG AA 对比度，键盘可完成筛选、选会话、发送和审批。
-
-### 13.7 已识别技术债与后续优化方向（2026-07-23 架构复审）
-
-Phase 1 待验收阶段的架构复审发现以下技术债。除主页改造涉及的路由调整外，以下三项列为独立技术债，不随主页改造（P1-12）自动实施：
-
-1. **前端工程结构落后于设想**（时间点已确认）：当前 `frontend/src/main.ts` 是单文件、模板字符串内嵌的实现，没有 `.vue` SFC，没有按 `views/components/stores/router` 拆分，与 §13.1 设想的可测试组件结构不符。2026-07-23 确认：P1-12 验收后单独设立 `plans/ai-coding-workbench/01-read-only-session-center.md` P1-13 前端基础整理门禁处理，完成后才批准 Phase 2，见 §19 决策记录。
-2. **样式系统未统一**：旧代理流量页 `app/static/style.css` 与新 workbench `frontend/src/styles.css` 是两套独立样式，§13.6 的语义状态色和控件状态覆盖目前只在新页面部分体现。两者共存于同一入口结构下后，视觉不一致会更明显，建议规划一次最小 design token 统一（配色、间距）。
-3. **会话列表“虚拟滚动”是简化实现**：实际是固定窗口裁剪（当前渲染 70 行），不感知容器高度变化，不是标准虚拟滚动。建议在正式验收前用接近测试矩阵目标（1,000 会话）的数据量实测一次滚动体验，并在 Phase 1 的已知限制中注明，而不是按标准虚拟列表描述。
-4. **构建产物一致性未校验**：`app/static/workbench/assets/*` 是构建后手动提交的 hash 命名文件，没有自动校验和 `src` 是否同步。建议后续验证流程加入一次“构建后 diff 检查”，避免只改 `src` 忘记重新构建导致产物静默过期。
-
-## 14. API 草案
-
-以下路径是设计草案，与 Phase 1 已实现的路径前缀（`/api/ai-workbench/*`，见 `plans/ai-coding-workbench/01-read-only-session-center.md` 执行证据）不同，尚未回填统一；Phase 2 起新增 API 时以本节草案为设计参照，实现时再核对实际前缀。
+总览保留现有页头及右上角全局搜索、通知、账户区域；不设“新建会话”卡片。页面骨架：
 
 ```text
-GET    /api/ai-tools/capabilities
-GET    /api/ai-tools/profiles
-POST   /api/ai-tools/profiles/discover
+页头：问候 / 全局搜索 / 通知 / 账户
 
-GET    /api/sessions
-GET    /api/sessions/{copy_id}
-GET    /api/sessions/{copy_id}/turns
-GET    /api/sessions/{copy_id}/copies
-GET    /api/sessions/{copy_id}/diff/{other_copy_id}
-POST   /api/sessions/{copy_id}/resume
-POST   /api/sessions/{copy_id}/fork
-POST   /api/sessions/new
+[今日 Token] [近七日 Token] [订阅套餐额度] [API 账户余额与预警]
 
-GET    /api/stats/overview
-GET    /api/stats/timeseries
-GET    /api/stats/breakdown
-GET    /api/stats/data-quality
+[待处理事项：运行中任务、失败自动任务、待确认操作、近期异常]
 
-GET    /api/automations
-POST   /api/automations
-PUT    /api/automations/{id}
-POST   /api/automations/{id}/run
-POST   /api/automations/{id}/pause
-
-GET    /api/runs
-GET    /api/runs/{id}
-POST   /api/runs/{id}/cancel
-POST   /api/approvals/{id}/respond
-WS     /ws/runs
+[最近会话（宽）]                         [本地数据源状态（窄）]
 ```
 
-列表接口统一使用 cursor pagination；会话全文搜索和事件查询不返回无限数组。
+四张统计卡只显示可行动的摘要，并跳转到对应的用量统计筛选；不承担明细、原始诊断或第二套统计页面职责。余额、额度和用量不可用时显示原因与配置入口。
 
-## 15. 安全与隐私
+### 3.2 会话工作区
 
-- 默认只监听 `127.0.0.1`；不在应用内建设认证系统、不作为网络远程服务部署。
-- 用户需要远程查看时，自行通过 SSH 本地端口转发连接到运行工作台的机器；认证和传输加密完全由 SSH 承担，本项目不重新实现登录、TLS 或会话管理。
-- SSH 隧道连入后视为实例所有者本人，拥有该实例当时开放的全部能力（不是天然只读）；Phase 3–5 上线后，运行、审批、自动任务和迁移等高风险操作同样可以通过隧道执行，不得因为经过 SSH 而降低确认、预算或回滚要求。
-- 项目不支持多人共享同一个 workbench 实例；`account_ref` 等字段指 Codex/Claude 自身的账号归属，不构成本项目的用户认证或多租户能力。
-- 若未来确实需要真正的"远程只读"模式或多用户隔离，需作为独立产品定位决策单独提出并批准，不得在现有 Phase 中顺带实现。
-- 不把 API Key、OAuth token、Cookie、完整环境变量写入日志或数据库。
-- transcript 全文索引默认本地，可关闭并支持清空重建。
-- prompt 和命令输出导出前执行密钥模式扫描。
-- 所有跨账号复制显示数据外发目标。
-- 定时任务保存权限模板，不保存 shell 拼接字符串。
-- 危险权限只能由用户显式开启，并在运行中心持续显示。
-- 原始第三方文件的删除、归档和覆盖不进入首版。
-
-## 16. 实施阶段与验收
-
-### Phase 0：技术 Spike
-
-- Codex App Server 无费用 `initialize`、`thread/list`、`thread/read(includeTurns=false)` 已验证。
-- Codex/Claude JSONL mock/fixture 流解析已建立最小 golden event 测试。
-- 脱敏 fixture 覆盖 user、assistant、tool、file.changed、usage、error、unknown 和 invalid JSON tail。
-- CC Switch v10、本机缺失/损坏数据库和当前源码 schema 能力清单已建立只读兼容测试。
-- fake CLI process supervisor 覆盖 argv、stdin、stdout、stderr、timeout 和有限输出缓冲。
-
-验收：不发送真实模型请求，也能完成能力探测、历史索引和模拟实时流。
-
-### Phase 1：只读会话中心
-
-- Profile 发现。
-- Codex/Claude 增量索引。
-- 会话三栏界面。
-- 搜索、筛选、raw view。
-- 副本和分叉检测。
-
-验收：Cockpit Tools 开启、关闭、未安装三种环境下行为一致，无第三方目录写入。
-
-### Phase 2：统计中心
-
-- 原生会话基线统计。
-- 数据质量标记。
-- CC Switch 只读连接器。
-- 去重与来源合并。
-
-验收：删除或禁用 CC Switch 连接器后，基础 token/会话统计保持一致，丰富指标正确降级。
-
-### Phase 3：手动运行
-
-- 新建、resume、fork。
-- 结构化实时输出。
-- 审批、取消、断线补发。
-- 受控真实回合测试：两种工具各新建一次、续接一次。
-
-### Phase 4：自动任务
-
-- 多 Step。
-- 一次性/Cron。
-- lease、幂等、重试、misfire。
-- 开机自启和恢复。
-
-### Phase 5：高级迁移
-
-- 跨 profile 复制。
-- 备份、哈希前置条件和回滚。
-- 与 Cockpit 并存写入测试。
-- 明确的隐私和 provider 兼容性提示。
-
-## 17. 参考实现与引用规则
-
-### 17.1 Cockpit Tools
-
-项目：<https://github.com/jlcodes99/cockpit-tools>
-
-重点参考：
-
-- `src-tauri/src/modules/codex_session_manager.rs`
-- `src-tauri/src/modules/codex_thread_sync.rs`
-- `src-tauri/src/modules/codex_official_app_server.rs`
-
-许可：CC BY-NC-SA 4.0。当前项目不计划商业化，可以在遵守署名、相同方式共享等条件下复用，但实施前仍需确认项目整体许可证与该许可证兼容。
-
-如果复制或实质改写代码，每个文件顶部注明：
+会话页是日常工作的主界面，采用三栏和按需诊断抽屉：
 
 ```text
-Derived from jlcodes99/cockpit-tools
-Upstream file: <URL>
-Upstream commit: <commit SHA>
-License: CC BY-NC-SA 4.0
-Changes: <本项目修改摘要>
+全局导航 | 会话上下文列表 | 当前会话的可读消息流
+                         └─ 高级诊断抽屉（从右侧按需打开）
 ```
 
-并维护 `THIRD_PARTY_NOTICES.md`。本讨论稿目前只引用设计与源码位置，没有复制源码。
+会话上下文列表包含新建、搜索、工具/项目/日期/状态筛选，以及用户分组、收件箱和最近时间流。主区默认展示用户消息、模型最终回复与可展开的工具摘要；不把原始 JSON-RPC 或 event 列表当作正常对话界面。
 
-### 17.2 CC Switch
+### 3.3 自动任务
 
-项目：<https://github.com/farion1231/cc-switch>
+自动任务页管理任务定义、计划、运行历史和待处理异常。任务不是普通会话；只有任务实际调用 Codex / Claude 时才会创建或继续原生会话，且该会话在最近时间流中标注其任务来源。
 
-重点参考：
+### 3.4 用量统计
 
-- `src-tauri/src/services/session_usage.rs`
-- `src-tauri/src/services/session_usage_codex.rs`
-- `src-tauri/src/database/schema.rs`
-- `docs/user-manual/en/4-proxy/4.4-usage.md`
+用量统计统一展示：原生会话/受控运行的默认用量口径、官方账户连接器、订阅额度、数据质量和来源状态。它还包含“CC Switch”可选数据源卡片（见第 10 节），但该卡片不自动合并到默认 Token 总计。
 
-许可：MIT。可以参考或复用兼容模块，但同样记录文件、commit 和许可证。
+### 3.5 代理流量
 
-### 17.3 Claude Waitlist
+`features/proxy-traffic-monitor` 是独立的 Clash/Mihomo 网络流量辅助功能，统计网络字节、连接、域名和网络运行状态。它不展示 CC Switch 的模型请求、Token、成本、TTFT 或模型维度数据。
 
-项目：<https://github.com/oyster-zzz/claude-waitlist>
+## 4. 核心领域模型
 
-只参考持久队列、倒计时、优先级和确认发送思路，不采用浏览器 DOM 注入方案。
+| 概念 | 所有者 | 说明 |
+|---|---|---|
+| 原生会话 | Codex / Claude | 工具自身创建和写入的 JSONL transcript。 |
+| 原生会话 ID | Codex / Claude | 原生文件中的稳定会话标识；是轻量索引和跨设备匹配的关键。 |
+| 会话索引项 | Workbench | 指向一个原生会话的轻量记录，不包含正文副本。 |
+| 用户分组 | Workbench | 用户组织会话的主分组；与原生工具无关。 |
+| 收件箱 | Workbench | 常驻位置，不是“未分类”的别名。 |
+| 最近 | Workbench | 未被提起至分组或收件箱的完整时间流，不是仅保留 N 条的快捷入口。 |
+| 受控运行 | Workbench | 一次由 Workbench 发起并审计的原生工具调用。 |
+| 自动任务 | Workbench | 可重复触发的任务定义，不等同于会话。 |
+| 任务运行 | Workbench | 自动任务的一次触发记录；可选地关联受控运行和原生会话。 |
+| 工具 profile | Workbench | 对“已发现的工具配置根、会话根和能力”的登记，不等同于 Codex 原生 `--profile`。 |
+| 连接器 | Workbench | 对官方余额/额度来源或明确外部只读来源的 adapter。 |
 
-## 18. 当前待讨论问题
+## 5. 数据所有权与持久化
 
-2026-07-23 起本节原有 7 项已全部解决，详见 §19 决策记录（Windows/Linux 支持范围、前端结构重构时间点、远程访问认证与多用户边界、跨账号复制发布范围、Phase 3 真实回合测试账号/模型/预算、全文索引默认值、模型价格表）。当前没有待讨论问题；新问题出现时按 §19 决策记录的格式追加到本节。
+### 5.1 原生数据：只读
 
-2026-07-31：新增 `docs/ai-coding-workbench-visual-design.md` 作为 Workbench SPA 的视觉设计提案。其侧栏导航、会话中心分栏和独立运行中心路由方向等待审查；在确认前不得将其视为完成状态或以视觉稿推断运行能力。
+Workbench 只读发现以下来源（实际路径由 profile 发现，不硬编码为跨设备契约）：
 
-## 19. 决策记录
+```text
+Codex   ~/.codex/sessions/**/*.jsonl
+Claude  ~/.claude/projects/**/*.jsonl
+```
+
+原生文件包含可读消息、工具活动、原生会话身份和可能存在的 token 信息。Workbench 不修改其内容、文件名、目录层级或归属。
+
+### 5.2 Workbench 轻量数据
+
+常驻数据只包括下列逻辑记录：
+
+| 类别 | 必要字段或内容 |
+|---|---|
+| 会话索引 | 工具、原生会话 ID、来源路径、文件指纹、大小、修改时间、已解析偏移、标题、最近摘要、最后活动时间、项目、来源状态。 |
+| 组织信息 | 分组 UUID、名称、排序值、会话主分组或收件箱位置。 |
+| 受控运行审计 | 运行身份、目标工具、会话关联、状态、时间、权限/预算摘要、脱敏诊断引用。 |
+| 自动化 | 任务定义、计划、时区、提示词序列、任务运行状态、非敏感参数。 |
+| 用量连接器 | 连接状态、最后成功值、币种/单位、来源、刷新时间、数据质量和预警阈值。 |
+| 小型缓存 | 有明确大小上限、保留期和清理入口的脱敏临时数据。 |
+
+以下内容不得作为长期投影存储：完整会话副本、每条原生 event、完整 raw JSON、常驻全文 FTS、外部凭据、第三方应用配置、浏览器登录态和大型原始日志。
+
+### 5.3 会话索引的更新
+
+```text
+原生目录变化
+   ↓（约 2 秒防抖）
+只比较变化文件
+   ↓
+读取完整 JSONL 行并更新轻量字段
+   ↓
+刷新会话列表；当前打开会话提示或追加新消息
+```
+
+- 目录监听不可用或漏事件时，使用最多每 30 秒一次的元数据轮询作为后备。
+- 打开会话页和用户点击刷新时立即进行轻量发现。
+- 写入中的半行 JSONL 不进入索引；等待文件出现完整行后再处理。
+- 全文搜索按需扫描原生文件并返回命中片段；不建立常驻全文副本。
+
+### 5.4 打开会话
+
+打开会话时直接解析来源 transcript：初屏显示最近 50 组用户/模型消息；向上滚动再按需读取更早消息。来源缺失时保留索引卡片并标注“来源暂不可用”，不伪造历史正文。
+
+## 6. 会话组织与交互
+
+### 6.1 标题与摘要
+
+- 标题：第一次用户输入的第一行或前 48–60 个可见字符。
+- 最近摘要：最近一条用户或模型消息的前 80–120 个字符。
+- 两者仅是索引字段，不回写原生文件。
+
+### 6.2 分组、收件箱与最近
+
+一个会话在第一版只能处于一个用户主分组、收件箱或最近时间流中的一个位置：
+
+| 位置 | 语义 |
+|---|---|
+| 用户分组 | 用户主动组织的会话。 |
+| 收件箱 | 用户想常驻保留、但暂不归入分组的会话。 |
+| 最近 | 所有未被提起的会话，按原生最后活动时间连续排列。 |
+
+分组的规则：
+
+- 创建为空分组；名称去首尾空格后不可为空或重名。
+- 内部以稳定 UUID 标识，可安全重命名。
+- 用户分组按手动拖拽排序；新组追加在末尾；收件箱和最近位置固定。
+- 组内会话按原生最后活动时间排序，不另设手动排序。
+- 删除分组只删除分组定义，显示受影响数量后确认；会话回到最近时间流，不影响任何原生文件。
+
+### 6.3 消息流和高级诊断
+
+| 内容 | 默认界面 | 按需展开 / 诊断 |
+|---|---|---|
+| 用户消息、模型最终回复 | 直接显示 | 可查看对应原生记录。 |
+| 模型显式计划或过程文字 | 当前回复内的可展开区 | 原始 event 可查。 |
+| 工具活动 | 安全的一行摘要 | 命令、路径、输出摘要、审批结果。 |
+| 错误、取消、超时 | 简洁可读状态与恢复动作 | 原始 payload、stderr、进程诊断。 |
+
+Workbench 不提取或展示模型未显式提供给用户的隐藏推理。同一原生 turn 的多个流式 delta 归并为一个消息项；`turn/completed` 与 Workbench 的终态共同表示本次输入完成。
+
+### 6.4 New、Resume 与 Handoff
+
+| 动作 | 语义 |
+|---|---|
+| New | 在选定工具中创建新的原生会话。 |
+| Resume | 在同一工具、同一原生会话中继续，保留原生上下文。 |
+| Handoff | 从当前会话选择消息或生成可审阅摘要，在另一工具创建新的原生会话。 |
+
+输入框依据当前选择呈现动作：未选会话时默认 New；选中会话时默认 Resume；换工具必须显式 Handoff。输入附近显示工具、原生 profile、权限和预算摘要；不再用独立“运行中心”承载这些选择。
+
+## 7. 受控运行与工具适配
+
+受控运行模块负责把用户或自动任务的意图交给原生工具，并保留最小、可审计的 Workbench 记录。它不拥有原生会话正文。
+
+```text
+会话输入 / 自动任务
+        ↓
+运行编排模块
+        ↓
+CodexAdapter 或 ClaudeAdapter
+        ↓
+原生 CLI / App Server
+        ↓
+规范化消息、工具摘要、状态、审计
+```
+
+### 7.1 适配 seam
+
+`CodexAdapter` 和 `ClaudeAdapter` 的 interface 负责：能力发现、New/Resume/Handoff 支持、参数映射、事件规范化、取消与原生审批转发。任何工具私有 CLI 参数、App Server 事件或 Claude 输出格式都不得直接泄漏到通用 UI 和轻量索引。
+
+未知原生记录必须降级为兼容的原始诊断事件，不能让整个会话或运行失效。
+
+### 7.2 权限与高权限参数
+
+- 默认按用户现有的 Codex / Claude 原生启动和配置执行。
+- Workbench 的“高权限”表示显式附加目标工具实际支持的参数；它展示参数、工具差异和审计，不额外把用户已配置的原生权限降级。
+- 不把某个工具的参数伪装成另一个工具的同等能力；不支持时明确不可选。
+- 产品实现仍必须遵守部署和操作者的安全策略；诊断与审计不得保存凭据。
+
+## 8. 自动任务架构
+
+```text
+自动任务定义（计划、提示词序列、会话目标、权限）
+        ↓ 每次触发
+任务运行记录（状态、时间、摘要、错误、审计）
+        ↓ 仅在调用工具时
+受控运行 / 原生会话
+```
+
+### 8.1 任务定义
+
+第一版支持：
+
+- 一次性时间、间隔、每天、每周，以及可选高级 Cron；所有入口保存为同一计划定义。
+- 固定 IANA 时区：创建时默认当前设备时区，迁移后仍按保存时区解释。
+- 一个或多个提示词。
+- 每次新建会话，或继续指定原生会话。
+- Codex / Claude 分别支持的 profile 与参数。
+
+提示词序列有两种模式：
+
+| 模式 | 下一提示词提交时机 |
+|---|---|
+| 等待完成 | 上一原生回合达到终态后。 |
+| 自定义固定间隔 | 从上一提示词提交开始计时，到点即提交；工具自行决定等待、排队或拒绝。 |
+
+固定间隔不由 Workbench 人为串行化。任务整体超时只按用户配置的预算处理。
+
+### 8.2 调度规则
+
+- 服务停机、设备休眠或调度器停止时错过的触发记录为“已错过”，不自动补跑。
+- 同一自动任务不重叠：前一轮仍运行时，新一次计划触发记录为“因前序仍运行而跳过”，不排队补跑。
+- 任务运行只有在实际调用工具时才关联原生会话；未调用工具或调用前失败不创建空会话。
+
+## 9. 用量、额度与余额
+
+### 9.1 数据类型不可混用
+
+| 类型 | 含义 | 能否直接相加 |
+|---|---|---|
+| 会话观测 Token | 原生会话或受控运行中观察到的 Token | 仅同一去重口径内可相加。 |
+| 代理请求 Token / 成本 | 代理层观察到的 HTTP 请求数据 | 不能默认与会话总计相加。 |
+| API 账户余额 | 预付费 API 可用金额 | 不等于订阅套餐额度。 |
+| 订阅窗口额度 | 如 5 小时 / 7 天的订阅剩余比例 | 不等于 API 余额或历史 Token。 |
+
+### 9.2 官方连接器
+
+凭据只保存在操作系统凭据库；不写入 Workbench 数据库、迁移包、日志或诊断 payload。连接器只在本机运行。
+
+首批官方能力：
+
+| 连接器 | 已确认能力 | 授权边界 |
+|---|---|---|
+| DeepSeek | API 账户余额 | 独立 DeepSeek API Key。 |
+| Kimi / Moonshot | API 账户余额 | 用户显式选择 `.ai` 或 `.com` 平台并配置对应 Key。 |
+| 阿里云 BSS | 账户可用余额 | 独立 RAM/STS 只读授权；不是 DashScope API Key。 |
+
+OpenCode Go 与 GLM Coding Plan 尚无已确认的正式个人订阅额度/余额查询接口。第一版显示“暂不支持自动读取”，不抓取网页和未文档化接口。
+
+### 9.3 刷新与降级
+
+- 打开总览或用量统计时检查已连接来源；用户可以手动刷新。
+- 服务运行期间默认 15 分钟刷新；遵守厂商更严格的限制。
+- 每个值显示来源与最后一次成功时间。
+- 失败时保留上一次成功值并标记 stale；从未成功时显示未连接或不可用，绝不显示为零。
+- 总览仅在余额低于阈值、订阅额度临界或数据长期过期时预警。
+
+### 9.4 CC Switch 可选数据源卡片
+
+CC Switch 与 Workbench 独立运行，绝不是安装或运行依赖。检测到 CC Switch 且其公开的只读 schema 兼容时，用量统计可显示独立的 CC Switch 卡片：
+
+- 代理观测范围内的请求数、Token、已记录成本、模型/供应商摘要、延迟和 TTFT；
+- 数据覆盖范围、CC Switch 版本、schema 和最后成功读取时间；
+- 明确说明“不可与默认会话 Token 总计直接相加”。
+
+当前禁止读取或复用：CC Switch 的订阅窗口、余额缓存、Tauri IPC、`providers.settings_config`、`providers.meta`、`settings.value`、凭据和自定义查询脚本。其 5h/7d 窗口和 Enable Usage Query 结果是内部进程缓存，不是稳定第三方契约。卡片对这些值只显示“由 CC Switch 管理，可打开查看”，不展示或推测数值。
+
+若未来 CC Switch 发布稳定、非敏感的只读 API 或导出契约，才允许用户显式启用版本化 best-effort adapter；失败立即降级为不可用。
+
+## 10. 多设备、远程访问与迁移
+
+### 10.1 分叉而非自动合并
+
+两台设备可各自运行本地会话。若它们从同一原生会话副本继续写入，则从首次各自写入起成为独立分叉；Workbench 不自动合并为可可靠 Resume 的单一历史。需要汇合时，用户选择一条会话并把另一条的摘要或指定消息作为新的 Handoff 上下文。
+
+### 10.2 远程访问所有者设备
+
+第一版支持另一台设备通过浏览器访问所有者设备上的 Workbench：
+
+- Codex / Claude 进程、原生文件、轻量索引和自动任务仍只在所有者设备运行。
+- 远程浏览器不复制数据，也不在自身设备启动原生工具。
+- 默认只监听本机；只有用户在设置中显式启用受信任局域网访问并配置认证后才可远程连接。
+- 默认不暴露到公网；审计记录请求来源设备信息。
+
+### 10.3 显式迁移与交接
+
+迁移是一次性、用户选择范围的复制，不是后台双向同步：
+
+```text
+迁移包
+├─ Workbench 轻量元数据
+│  ├─ 分组、收件箱位置、排序
+│  ├─ 自动任务、计划、提示词、会话目标、非敏感参数
+│  └─ 索引和来源匹配信息
+├─ 用户选定的原生 Codex / Claude 会话文件
+└─ 可选：小型任务运行摘要与审计索引
+```
+
+迁移包不包含 API Key、登录态、系统凭据、完整事件投影、缓存、临时目录、大型日志或项目代码。项目代码由 Git 或用户自己的文件迁移方案负责。
+
+交接流程：源设备暂停相关自动任务并等待活动运行结束或由用户取消 → 导出并复制选定内容 → 目标设备导入、扫描和校验工具/profile/项目路径 → 用户确认后由目标设备接管。找不到原生来源的分组关联保留为“等待来源”，不伪造会话内容。
+
+## 11. 外部系统边界
+
+| 系统 | 关系 | 明确禁止 |
+|---|---|---|
+| Codex / Claude | 原生会话来源与执行目标。 | 修改原生 transcript，伪造 Resume。 |
+| CC Switch | 可选的用量统计卡片来源；未来可能有版本化只读 adapter。 | 读取凭据、内部缓存、Tauri IPC；作为核心依赖。 |
+| Cockpit Tools | 仅与 Workbench 共存的外部账号/多实例管理软件；不是数据源、执行目标或用户可见功能。 | 读取、解析、展示、调用或写入其数据/进程/API；作为核心依赖。 |
+| Clash/Mihomo | `代理流量` 辅助功能的数据源。 | 与 CC Switch Token/成本数据混合统计。 |
+
+### 11.1 Cockpit Tools：共存而不集成
+
+Cockpit Tools 是独立的本地账号与多实例管理软件。其官方资料说明它可管理多账号切换、多实例工作流、配额监控、唤醒任务，并包含 Codex 会话同步等能力；详见 [官方 README](https://github.com/jlcodes99/cockpit-tools/blob/main/README.en.md) 和 [发布说明](https://github.com/jlcodes99/cockpit-tools/releases)。本机已确认其数据目录包含账号、实例、配置、备份、日志和密钥相关文件，因此它不是安全、稳定或必要的 Workbench 数据边界。
+
+已确认的产品关系是“**共存但不集成**”：
+
+- Workbench 的核心能力只依赖 Codex / Claude 原生目录、用户明确登记的目录和自己的轻量索引；不因为 Cockpit 安装、运行或未运行而改变功能可用性。
+- Workbench 不读取 Cockpit 配置、账号、实例、配额、唤醒任务、会话同步、SSH 同步、本地 API/WebSocket、日志或凭据；不在设置、会话、用量或自动任务页面展示 Cockpit 信息或入口。
+- Cockpit 若同时操作同一原生目录，只是一个潜在的外部 writer。Workbench 不检测 Cockpit 进程或进程名，继续以完整记录解析、文件身份/变更检测、来源健康度和原生文件按需读取处理并发变化；不建立 Cockpit 专用协议。
+- 既有的 Workbench 自有 `cockpit_profile_whitelist` 不是 Cockpit 数据接入，也不应继续作为产品能力。轻量索引迁移实施时应移除该旧发现路径，用户需要额外目录时使用通用的手动目录登记。
+- 多个手动登记目录中若发现相同工具、相同原生会话 ID 的文件，无论来源是否为 Cockpit 同步，都视为同一逻辑会话的多个只读来源副本：不自动合并、覆盖或伪造 Resume。默认选择最近完整来源；正常会话列表只显示一行“多来源”标记，路径、差异和来源切换放在高级诊断抽屉。
+- 未来只有用户重新提出明确、可验证且不触及账号/凭据/同步写入的独特需求时，才可重新评估一个版本化的只读适配器；在此之前不预留 UI、存储或运行时依赖。
+
+## 12. 从重型投影迁移到轻量索引
+
+旧实现曾将大量原生事件、raw JSON、会话副本和重型投影持久化到 Workbench 数据库，造成数据库远大于原生数据。目标迁移流程：
+
+1. 提取仍有价值的轻量组织数据、自动任务和必要受控运行审计。
+2. 从原生 Codex / Claude 文件重建并核验轻量索引。
+3. 切换读取路径至轻量索引和按需 transcript 解析。
+4. 删除完整事件、raw JSON、会话副本、重型全文投影和旧重型库；不保留兼容读取路径、长期归档或同等大小备份。
+
+删除前必须向用户列出精确删除对象、预计释放空间和保留的轻量数据；删除后报告实际释放空间。这是透明性要求，不构成回滚方案。
+
+## 13. 安全、隐私与诊断
+
+- 原生 transcript、第三方目录和外部数据库默认只读。
+- 凭据只存在于操作系统凭据库；不进入数据库、导出包、日志、payload 或页面复制内容。
+- 原始诊断仅在高级抽屉按需显示，且需脱敏 Token、Cookie、密码、环境变量和密钥。
+- 大型输出使用可清理 artifact 引用，不内联持久化。
+- 远程访问默认关闭；启用 LAN 访问须显式认证。
+- 任何可造成数百 MB 至数 GB 新常驻数据的设计，必须先说明收益、位置、保留期和替代方案并获得用户确认。
+
+## 14. 目标模块与 interface
+
+| Module | 面向调用方的 interface | 内部职责 |
+|---|---|---|
+| 会话发现与索引 | `discoverChangedSources()`、`listSessions()`、`openSession()`、`searchNative()` | 监听、防抖、指纹、偏移、JSONL 容错、按需解析。 |
+| 会话组织 | `moveToGroup()`、`pinToInbox()`、`renameGroup()`、`exportOrganization()` | UUID、排序、互斥位置、迁移匹配。 |
+| 受控运行 | `start()`、`cancel()`、`observe()` | 参数校验、adapter 调用、状态机、审计、实时事件。 |
+| 自动任务 | `schedule()`、`runNow()`、`listRuns()` | 计划解析、时区、错过/重叠规则、提示词序列。 |
+| 用量聚合 | `getOverview()`、`getUsageBySource()`、`refreshConnector()` | 口径隔离、数据质量、去重、刷新与预警。 |
+| 外部连接器 | `detect()`、`refresh()`、`status()` | 官方授权、限流、来源标签、stale 降级。 |
+| 迁移与交接 | `exportSelection()`、`importSelection()`、`validateTarget()` | 非敏感元数据、来源匹配、显式交接检查。 |
+
+这些 interface 是测试表面。工具私有 schema、文件细节、网络协议和缓存实现属于各模块内部；新增 adapter 不应迫使 UI 或通用业务逻辑了解外部工具细节。
+
+## 15. 实施边界与后续文档
+
+本文确立目标架构。现有阶段计划、数据库 schema、API 和前端存在与本文不一致的内容时，必须先按本架构重新拆分和审批，不能把旧重型投影或独立运行中心的实现继续扩展为既成事实。
+
+实施时至少需要分别完成：
+
+1. 轻量索引和原生按需读取迁移。
+2. 会话工作区 UI、分组、收件箱和高级诊断抽屉。
+3. 总览与用量统计口径重构、官方连接器和 CC Switch 卡片。
+4. 自动任务调度与任务运行模型。
+5. 远程 LAN 访问、显式迁移和交接。
+
+每项实施均需对应阶段计划、fixture、自动测试和用户验收；不能因为架构已经确认而自动开始未获批准的阶段。
+
+## 16. 决策记录
 
 | 日期 | 决策 | 状态 |
 |---|---|---|
-| 2026-07-21 | 参考项目修正为 `jlcodes99/cockpit-tools` | 已确认 |
-| 2026-07-21 | 项目不以 Cockpit Tools 或 CC Switch 为安装依赖 | 已确认 |
-| 2026-07-21 | Cockpit Tools 代码允许在非商业且满足许可证时参考/复用并署名 | 已确认 |
-| 2026-07-21 | CC Switch 采用可选只读连接器，自有解析器始终存在 | 方案建议 |
-| 2026-07-21 | App Server 采用能力探测和 fallback，不作为不可替换依赖 | 方案建议 |
-| 2026-07-21 | 首阶段不写原生会话，不做自动跨账号同步 | 方案建议 |
-| 2026-07-21 | 本项目不升级外部软件；需要时先沟通并建议用户从软件自身界面完成整包更新 | 已确认 |
-| 2026-07-21 | Phase 2 升级的是本项目 CC Switch 兼容层，覆盖外部 schema v10/v16，不迁移外部数据库 | 已确认 |
-| 2026-07-21 | 项目规则使用根 `AGENTS.md`，长期决策使用可审查的 project context，重复流程使用 repo skill | 已确认 |
-| 2026-07-23 | workbench SPA 作为前端主壳，根路径 `/` 默认进入总览页；代理流量监控迁移为可跳转子页面，不再是默认首页 | 已确认 |
-| 2026-07-23 | “总览”首页首版只做功能入口卡片，不嵌入统计小部件 | 已确认 |
-| 2026-07-23 | 前端结构重构、样式系统统一、构建产物一致性校验列为独立技术债，暂不随主页改造一并实施 | 已确认 |
-| 2026-07-23 | 项目长期上下文改为分流治理，取代 2026-07-21“长期决策使用可审查的 project context”一条：术语进根 `CONTEXT.md`；架构决策进本文档决策表，重大长期权衡进 `docs/adr/`；Phase 状态和执行证据进 `plans/ai-coding-workbench/`；`docs/project-context.md` 已删除 | 已确认 |
-| 2026-07-23 | 首个正式版本仅正式支持并验收 Windows；Linux 设计上尽量保持可迁移，但不作兼容性、测试或维护承诺，也不作为发布阻塞项；未来正式支持 Linux 需单独批准并补齐测试矩阵 | 已确认 |
-| 2026-07-23 | 前端结构重构和样式系统统一不并入 P1-12，也不作为 Phase 2 内部任务；P1-12 验收后单独设立 P1-13 前端基础整理门禁（只做结构迁移，不改变现有业务行为），完成后才批准 Phase 2 | 已确认 |
-| 2026-07-31 | 新增 Workbench SPA 与代理流量监控视觉设计提案：以左侧应用导航、会话中心分栏、独立运行中心、可审计统计页和独立流量页为目标；总览仍不嵌入统计事实，最终实现范围待审查 | 待审查 |
-| 2026-07-31 | 用户批准将 `/traffic` 前端统一进 Workbench SPA：复用 Vue Router、Vite 构建和全局应用外壳；代理流量后端继续以 feature 的独立 `mount()`/`lifespan()`、Collector、SQLite、REST/WebSocket API 运行 | 已确认 |
-| 2026-07-23 | 不做应用内远程服务：FastAPI 永远只监听 127.0.0.1，不建认证系统；远程访问由用户自行通过 SSH 隧道实现，隧道连入视为实例所有者本人，拥有当时开放的全部能力；不支持多人共享实例；真正的远程只读或多用户隔离需单独提出并批准 | 已确认 |
-| 2026-07-23 | “多设备会话同步”需求拆解为远程查看/复制/交接/分叉四个精确概念（定义见 `CONTEXT.md`）：远程查看复用已确认的 SSH 隧道方案，不需要新功能；复制沿用 Phase 5 已设计的一次性迁移流水线；新增“交接”作为复制的一种用户操作，在 Phase 5 内实现（P5-11）；不实现持续双向原生文件同步——两个物理副本各自独立写入产生的分叉不能按时间戳自动合并，且绕过工作台的原生 CLI 写入无法被 writer lease 约束 | 已确认 |
-| 2026-07-23 | Phase 5（跨账号复制）不作为首个正式版本的发布门槛；Phase 5 在 Phase 1/3/4 稳定后单独审查、独立发布，交付时默认关闭并标记为实验性功能；首批只开放已完整验证的 copy/fork 组合，replace、设备交接、Claude 目标、跨 provider 分别验证通过后再逐项开放；“实验性”只能收窄支持范围，不得降低备份、precondition、原子写入、回滚、隐私披露的验收标准 | 已确认 |
-| 2026-07-23 | Phase 3 真实回合测试采用"日常账号 + 一次性硬范围"账号模板：使用已登录的日常 Codex/Claude 账号，但每次批准只覆盖固定业务回合数，不构成后续测试或自动重试授权；模型选择只读探测账号可用列表后选最低成本、最可预测档位，批准单须写明确切型号；预算以结构化字段（回合数、单回合输入/输出/turn数/时长、单工具和总预算上限、重试和模型回退规则、中止条件）表达，不用单一金额数字；真正执行前需逐字段填写并批准 `plans/ai-coding-workbench/03-interactive-runtime.md` P3-10 审批单模板 | 已确认 |
-| 2026-07-23 | 全文索引默认值改为"新实例默认建议开启，但首次构建索引前明确提示（存储位置、脱敏局限、关闭/清空方式）并允许拒绝；已有安装不自动改变现有设置"，见 `plans/ai-coding-workbench/01-read-only-session-center.md` P1-14 | 已确认 |
-| 2026-07-23 | 模型价格表不由项目维护内置权威数据，只实现可插拔 pricing source：价格来自用户导入/配置的本地 snapshot，每条估算附带来源、生效时间、更新时间和币种，无价格源时显示不可用；见 `plans/ai-coding-workbench/02-statistics-center.md` P2-06 | 已确认 |
-| 2026-07-23 | CC Switch 的 `model_pricing` 表可作为 pricing source 的候选来源（方案 C）：只读探测但默认不启用，用户显式信任后才生效；只产生 API-equivalent estimate，不改写 token/会话/实际成本事实；用户自建价格 snapshot 优先级高于此来源；当前仅确认表存在，列结构/币种/生效时间语义验证完成前不得自动启用；P2-00/P2-04 同步补充一致性读取、锁状态区分、schema 缓存、多数据库路径发现、文件替换游标失效等兼容性设计缺口 | 已确认 |
-| 2026-07-23 | 术语消歧：`CONTEXT.md` 改为 Native 层/Workbench 层两栏结构；确认 Workbench 的 Profile（`tool_profiles`，配置根目录+会话根目录组合）与 Codex 原生 `--profile`（同一 CODEX_HOME 内更小粒度的配置切换，Claude 无对应机制）是不同概念，互不替代；新增 Provider、账号、Turn、Thread、实例五个词条；Thread 与 `native_session_id` 的映射规则留待 Phase 3 确认，不提前定义 | 已确认 |
-| 2026-07-24 | 仓库结构反转：AI Coding Workbench 是主产品，仓库根即 Workbench 工程根（`app/`/`frontend/`/`tests/` 提升到仓库根，不再套 `products/`/`ai-coding-workbench/` 包装目录）；代理流量监控降级为挂载在主产品上的辅助功能 `features/proxy-traffic-monitor/`；未来新增辅助功能统一走 `features/<slug>/`，提供进程内模块/静态子应用/独立进程三种技术栈无关的集成模式；文档治理不对称——根 `AGENTS.md`/`CONTEXT.md` 兼任仓库级和主产品治理，辅助功能默认只配轻量 README；详见 `docs/adr/0002-workbench-root-and-feature-module-layout.md`（取代 ADR 0001 的放置决定）。物理迁移已于当日完成：`git mv` 保留历史记录，26 个测试（Workbench 21 + 代理流量监控 5）全部通过，端到端 TestClient 冒烟测试确认两个子系统在同一 FastAPI 进程内正常工作 | 已确认，迁移已完成 |
+| 2026-08-01 | Workbench 采用“原生来源优先 + 轻量常驻索引 + 按需读取正文/全文”的数据模型。 | 已确认 |
+| 2026-08-01 | 取消一级运行中心与独立运维页；运行和诊断融入会话、总览、自动任务、设置。 | 已确认 |
+| 2026-08-01 | 会话页采用三栏工作区；默认可读消息流，高级诊断按需抽屉。 | 已确认 |
+| 2026-08-01 | 会话操作严格区分 New、Resume、Handoff；跨工具不伪装为 Resume。 | 已确认 |
+| 2026-08-01 | 分组、收件箱和最近为 Workbench 轻量组织数据；一个会话一个主位置。 | 已确认 |
+| 2026-08-01 | 自动任务采用任务定义 → 任务运行 → 可选原生会话三层模型。 | 已确认 |
+| 2026-08-01 | 高权限在产品中是工具特定参数；不额外限制用户已有原生配置。 | 已确认 |
+| 2026-08-01 | 自动任务不补跑错过触发，同一任务不重叠。 | 已确认 |
+| 2026-08-01 | 双机继续同一原生副本会分叉，不自动合并；支持显式 Handoff 汇合。 | 已确认 |
+| 2026-08-01 | 远程访问采用受认证的可选 LAN 所有者设备模式；默认本机监听。 | 已确认 |
+| 2026-08-01 | 迁移为显式一次性包；不迁移凭据、缓存和完整投影。 | 已确认 |
+| 2026-08-01 | 旧重型投影迁移完成后直接删除，无兼容读取或长期归档。 | 已确认 |
+| 2026-08-01 | 首批余额连接器为 DeepSeek、Kimi/Moonshot、阿里云 BSS；OpenCode Go/GLM 暂不自动读取。 | 已确认 |
+| 2026-08-01 | CC Switch 独立运行；仅可作为用量统计可选卡片的未来只读来源，不读取订阅/余额缓存或凭据。 | 已确认 |
+| 2026-08-01 | Clash 代理流量与 CC Switch 模型请求观测分属不同页面和不同统计口径。 | 已确认 |
+| 2026-08-01 | Cockpit Tools 只与 Workbench 共存，不读取、不展示、不调用其账号、多实例、配额、唤醒、会话同步、SSH 同步或本地服务；移除旧的 Cockpit 专用目录发现路径。 | 已确认 |
+
+## 17. 参考资料
+
+- [会话工作台重构决策](conversation-workspace-rethink.md)
+- [供应商余额、额度与用量连接器调研](research/provider-usage-connectors.md)
+- [CC Switch 本地集成调研](research/cc-switch-local-integration.md)
+- [DeepSeek 余额 API](https://api-docs.deepseek.com/api/get-user-balance/)
+- [Kimi 余额 API](https://platform.kimi.ai/docs/api/balance)
+- [阿里云 BSS `QueryAccountBalance`](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import json
 import queue
+import os
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .codex_runtime import ExecutionCapabilities, ExecutionResult, _event, _read_stream
+
+
+def resolve_claude_executable() -> str | None:
+    """Resolve the configured Claude CLI without silently guessing a path."""
+    override = os.environ.get("AI_WORKBENCH_CLAUDE_EXECUTABLE")
+    if override:
+        return override
+    return shutil.which("claude") or shutil.which("claude.cmd")
 
 
 @dataclass
@@ -40,7 +50,9 @@ class ClaudeAdapter:
         # Claude 2.1.x requires --verbose when --print is paired with the
         # stream-json output contract; without it the process rejects the
         # request before creating or resuming a native session.
-        argv = list(self.executable) + ["-p", prompt, "--verbose", "--output-format", "stream-json", "--include-partial-messages"]
+        # ``claude -p`` accepts prompt text on stdin. Keep user content out of
+        # the process command line, where it would be visible to local tools.
+        argv = list(self.executable) + ["-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages"]
         uncertain = False
         if session_id:
             argv += ["--resume", session_id]
@@ -59,8 +71,15 @@ class ClaudeAdapter:
             argv += ["--allowedTools", tool]
         for tool in disallowed_tools:
             argv += ["--disallowedTools", tool]
-        process = subprocess.Popen(tuple(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        process = subprocess.Popen(tuple(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, encoding="utf-8", errors="replace", cwd=self.cwd, env=self.env)
+        try:
+            process.stdin.write(prompt)
+            process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            # stream_events will surface the native process failure with its
+            # own stderr/exit-code evidence.
+            pass
         if self.on_process:
             self.on_process(process)
         return ClaudeStepProcess(process, tuple(argv), uncertain)

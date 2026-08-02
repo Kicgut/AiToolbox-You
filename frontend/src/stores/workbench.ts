@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { api } from '../api/client';
 import { FTS_NOTICE, FTS_NOTICE_VERSION } from '../constants/fts';
-import type { ProfileRow, SearchStatus, SessionDetail, SessionRow, RunRow, RunEvent, ApprovalRequest, ComposeRunRequest } from '../types/workbench';
+import type { ProfileRow, SearchStatus, SessionDetail, SessionRow, RunRow, RunEvent, RunEventPage, ApprovalRequest, ComposeRunRequest } from '../types/workbench';
 
 export const useWorkbenchStore = defineStore('workbench', {
   state: () => ({
@@ -21,7 +21,8 @@ export const useWorkbenchStore = defineStore('workbench', {
     virtualStart: 0,
     inspectorOpen: false
     ,runs: [] as RunRow[], activeRun: null as RunRow | null, activeApprovals: [] as ApprovalRequest[], runEvents: [] as RunEvent[], runSocket: null as WebSocket | null, runPoll: null as number | null,
-    composerBusy: false, composerError: ''
+    composerBusy: false, composerError: '', runHistoryAvailable: false, runHistoryLoading: false,
+    runConnection: 'idle' as 'idle' | 'connecting' | 'live' | 'offline'
   }),
   actions: {
     async init() {
@@ -191,13 +192,25 @@ export const useWorkbenchStore = defineStore('workbench', {
       }
     },
     async openRun(id: string) {
-      const payload = await api.get<{ run: RunRow; approvals: ApprovalRequest[]; events: RunEvent[] }>(`/api/ai-workbench/runs/${id}`);
+      const payload = await api.get<{ run: RunRow; approvals: ApprovalRequest[]; events: RunEvent[]; has_more: boolean }>(`/api/ai-workbench/runs/${id}`);
       this.activeRun = payload.run;
       this.activeApprovals = payload.approvals;
       this.runEvents = payload.events;
+      this.runHistoryAvailable = payload.has_more;
+      this.connectRunStream(id);
+      if (this.runPoll !== null) window.clearInterval(this.runPoll);
+      if (['queued', 'starting', 'running', 'waiting_approval', 'cancel_requested', 'cancelling'].includes(payload.run.state)) {
+        this.runPoll = window.setInterval(() => { void this.refreshActiveRun(); }, 1000);
+      }
+    },
+    connectRunStream(id: string) {
       this.runSocket?.close();
+      this.runConnection = 'connecting';
       const socketUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ai-workbench/runs/${id}/stream?last_sequence_no=${this.runEvents.at(-1)?.sequence_no || 0}`;
       const socket = new WebSocket(socketUrl);
+      socket.onopen = () => {
+        if (this.activeRun?.id === id && this.runSocket === socket) this.runConnection = 'live';
+      };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data);
         if (message.resync_required) {
@@ -208,14 +221,14 @@ export const useWorkbenchStore = defineStore('workbench', {
           const seen = new Set(this.runEvents.map(item => item.sequence_no));
           this.runEvents.push(...message.events.filter((item: RunEvent) => !seen.has(item.sequence_no)));
           this.runEvents.sort((a, b) => a.sequence_no - b.sequence_no);
+          if (typeof message.has_more === 'boolean') this.runHistoryAvailable = message.has_more;
           void this.refreshActiveRun();
         }
       };
+      socket.onclose = () => {
+        if (this.activeRun?.id === id && this.runSocket === socket) this.runConnection = 'offline';
+      };
       this.runSocket = socket;
-      if (this.runPoll !== null) window.clearInterval(this.runPoll);
-      if (['queued', 'starting', 'running', 'waiting_approval', 'cancel_requested', 'cancelling'].includes(payload.run.state)) {
-        this.runPoll = window.setInterval(() => { void this.refreshActiveRun(); }, 1000);
-      }
     },
     async refreshActiveRun() {
       if (!this.activeRun) return;
@@ -231,9 +244,25 @@ export const useWorkbenchStore = defineStore('workbench', {
         this.runEvents.sort((a, b) => a.sequence_no - b.sequence_no);
       }
       await this.loadRuns();
+      if (['queued', 'starting', 'running', 'waiting_approval', 'cancel_requested', 'cancelling'].includes(payload.run.state) && this.runConnection === 'offline') {
+        this.connectRunStream(id);
+      }
       if (!['queued', 'starting', 'running', 'waiting_approval', 'cancel_requested', 'cancelling'].includes(payload.run.state) && this.runPoll !== null) {
         window.clearInterval(this.runPoll);
         this.runPoll = null;
+      }
+    },
+    async loadMoreRunEvents() {
+      if (!this.activeRun || !this.runEvents.length || this.runHistoryLoading) return;
+      this.runHistoryLoading = true;
+      try {
+        const last = this.runEvents.at(-1)?.sequence_no || 0;
+        const page = await api.get<RunEventPage>(`/api/ai-workbench/runs/${this.activeRun.id}/events?after_sequence=${last}&limit=200`);
+        const seen = new Set(this.runEvents.map(item => item.sequence_no));
+        this.runEvents.push(...page.events.filter(item => !seen.has(item.sequence_no)));
+        this.runHistoryAvailable = page.has_more;
+      } finally {
+        this.runHistoryLoading = false;
       }
     },
     async cancelActiveRun() {
@@ -260,6 +289,8 @@ export const useWorkbenchStore = defineStore('workbench', {
       this.activeRun = null;
       this.activeApprovals = [];
       this.runEvents = [];
+      this.runHistoryAvailable = false;
+      this.runConnection = 'idle';
     },
     updateVirtualStart(scrollTop: number, rowHeight: number) {
       this.virtualStart = Math.max(0, Math.floor(scrollTop / rowHeight) - 5);

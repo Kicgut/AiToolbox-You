@@ -40,12 +40,13 @@ def test_run_stream_replays_then_delivers_live_events(monkeypatch, tmp_path):
     app = _app(db_path, executor)
     client = TestClient(app)
     created = client.post("/api/ai-workbench/runs", json={
-        "action": "new", "tool": "codex", "profile_id": "p", "cwd": str(tmp_path), "prompt": "read only",
+        "action": "new", "tool": "codex", "profile_id": "p", "cwd": str(tmp_path), "cwd_confirmed": True, "prompt": "read only",
     }).json()["run"]
     assert entered.wait(2.0)
     with client.websocket_connect(f"/api/ai-workbench/runs/{created['id']}/stream?last_sequence_no=0") as socket:
         snapshot = socket.receive_json()
-        assert snapshot["type"] == "snapshot"
+        assert snapshot["type"] == "hello"
+        assert snapshot["connection_id"] and snapshot["high_watermark"] >= 1
         assert snapshot["events"]
         cursor = max(event["sequence_no"] for event in snapshot["events"])
         release.set()
@@ -60,4 +61,27 @@ def test_run_stream_replays_then_delivers_live_events(monkeypatch, tmp_path):
     detail = client.get(f"/api/ai-workbench/runs/{created['id']}?last_sequence_no={cursor}").json()
     assert detail["run"]["state"] == "succeeded"
     assert all(event["sequence_no"] > cursor for event in detail["events"])
+    app.state.ai_workbench_runtime.stop()
+
+
+def test_run_events_endpoint_pages_history(monkeypatch, tmp_path):
+    db_path = tmp_path / "history.db"
+    monkeypatch.setenv("AI_WORKBENCH_DB_PATH", str(db_path))
+    _profile(db_path, tmp_path)
+    app = _app(db_path, lambda _run, _step: ExecutionResult(events=[]))
+    client = TestClient(app)
+    created = client.post("/api/ai-workbench/runs", json={
+        "action": "new", "tool": "codex", "profile_id": "p", "cwd": str(tmp_path), "cwd_confirmed": True, "prompt": "read only",
+    }).json()["run"]
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        detail = client.get(f"/api/ai-workbench/runs/{created['id']}").json()
+        if detail["run"]["state"] == "succeeded":
+            break
+        time.sleep(0.02)
+    response = client.get(f"/api/ai-workbench/runs/{created['id']}/events?after_sequence=0&limit=1")
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["events"]) == 1
+    assert payload["has_more"] is True
     app.state.ai_workbench_runtime.stop()

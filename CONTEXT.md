@@ -1,92 +1,54 @@
-# AI Coding Workbench 术语表
+# AI Coding Workbench 上下文与术语
 
-跨代码、UI 文案、文档反复使用的规范名称和简短定义。不含实现细节、决策理由或状态——那些分别属于 `docs/ai-coding-workbench-architecture.md`（架构与决策记录）、`docs/adr/`（重大架构决策）和 `plans/ai-coding-workbench/`（阶段任务与执行证据）。
+本文件只定义跨文档、跨模块共享的术语。产品架构以
+[`docs/ai-coding-workbench-architecture.md`](docs/ai-coding-workbench-architecture.md)
+为准；已确认的产品交互决策以
+[`docs/conversation-workspace-rethink.md`](docs/conversation-workspace-rethink.md)
+为准。
 
-术语分两层：**Native 层**是 Codex/Claude/CC Switch/Cockpit Tools 自己的词汇，本项目不重新定义、只引用；**Workbench 层**是本项目自己设计的统一抽象，建立在 Native 层数据之上，不替代、不改写原生数据。新增词条前必须先问一句"这个词有没有原生对应物，含义是否一致"，避免重复 Profile 词条曾经出现过的遗漏。
+## 产品边界
 
-## Native 层
+- **AI Coding Workbench（Workbench）**：整合本机 Codex、Claude 等原生编程工具的会话、运行入口、自动任务、用量与诊断的本地工作台；不是第二个模型服务、第二份完整会话库或代理服务。
+- **原生工具**：Codex、Claude Code 等实际创建会话、执行 CLI/App Server、持有原生会话文件的工具。
+- **原生数据源**：原生工具维护的会话 JSONL 与相关只读元数据。会话内容的事实来源，不由 Workbench 复制、改写或替代。
+- **原生会话（Native Session）**：由某个原生工具创建并以“工具 + 原生会话 ID”唯一标识的一段会话。
+- **会话工作区（Conversation Workspace）**：一级“会话”页的三栏交互空间：全局导航、会话上下文列表、可读消息主区；按需打开高级诊断抽屉。
 
-**原生会话（Native Session）**：
-Codex 或 Claude CLI 自己创建、拥有、写入的会话，物理形式是本机 JSONL transcript 文件（如 `~/.codex/sessions/**/*.jsonl`、`~/.claude/projects/**/*.jsonl`）。本项目对其永远只读，绝不写入。
-_Avoid_: 会话（单独使用时，必须先说明是原生会话还是 Workbench 会话副本）
+## 数据与索引
 
-**原生 Session ID**：
-Codex/Claude 原生 rollout/JSONL 文件中的 `session_id`/`sessionId`/`id` 字段。对应 Workbench 的 `native_session_id`，是会话副本唯一键的一部分。
+- **轻量索引（Lightweight Index）**：Workbench 自己持久化的少量会话定位和组织元数据，例如工具、原生会话 ID、源路径指纹、偏移量、标题、最近摘要、活动时间、项目、来源健康度和分组归属。它不是会话副本。
+- **按需原文读取（Source-on-demand Read）**：打开会话、加载更早消息和全文检索时直接解析原生会话文件，而不是查询已持久化的完整转录本或 raw 事件投影。
+- **受控运行审计（Controlled Run Audit）**：Workbench 对一次 New、Resume、Handoff 或自动任务提交所保存的最小可追溯记录；它不取代原生会话内容。
+- **原生转录本（Native Transcript）**：原生 JSONL 中的人类消息、模型消息、工具活动和协议事件。仅在需要时读取；原始协议仅在高级诊断中展示。
+- **重型投影（Heavy Projection）**：持久化完整 raw JSON、事件流、结构化消息副本、会话副本或完整 FTS 的旧设计。目标架构不再保留它。
 
-**Codex 原生 `--profile`**：
-Codex CLI 自己的配置切换机制：`~/.codex/<name>.config.toml`，通过 `codex --profile <name>` 选用一组 model/审批策略/sandbox 等配置，优先级介于项目级配置和默认 `config.toml` 之间。**与 Workbench 的 Profile 不是同一概念**——这是同一个 `CODEX_HOME` 内部的配置切换，粒度比 Workbench Profile 小得多；Claude Code 没有对应机制，这个冲突只存在于 Codex 一侧。
-_Avoid_: 不要简称"profile"后直接当作 Workbench Profile 使用；必须写"Codex 原生 --profile"
+## 会话组织与动作
 
-**Thread（Codex App Server 协议）**：
-Codex App Server 协议方法（`thread/start`、`thread/list`、`thread/read` 等）里的会话标识概念。对 Workbench Phase 3 新建或 Fork 的受监管 run，返回的 `threadId` 同时落入该 run 的 `native_thread_id` 与 `native_session_id`；这只是本次运行的原生身份记录，不反向推断已有 JSONL transcript。Resume/Fork 只能显式使用索引 `Session Copy` 的 `native_session_id`，禁止“最近会话”语义。
+- **用户分组（Group）**：用户在 Workbench 内为会话建立的一个主分组。V1 中每个会话至多属于一个主分组，不使用标签。
+- **收件箱（Inbox）**：用户主动常驻在会话列表顶部的会话位置；不是未读状态。解除常驻后会话回到“最近”的原有时间位置。
+- **最近（Recent）**：未在任何用户分组或收件箱中的全部会话，按原生最后活动时间排序的完整时间线，不是“最近 N 条”。
+- **New**：在所选原生工具中新建原生会话。
+- **Resume**：在相同工具中继续同一个原生会话。
+- **Handoff**：把用户选定消息或摘要作为上下文，在另一工具中新建原生会话；绝不伪装为跨工具 Resume。
+- **原生回合完成（Native Turn Completion）**：适配器接收到原生工具明确的回合完成信号（例如 `turn/completed`）后，当前输入才完成。消息流中的 delta 和 item 完成并不等于回合完成。
 
-**实例（Instance）**：
-Cockpit Tools 自己的原生概念，记录在其 `codex_instances.json` 里。Workbench 不使用"实例"这个词描述自己的抽象，对应的本项目概念请用 Profile（Workbench 层）。
-_Avoid_: 用"实例"指代 Workbench 的 Profile
+## 自动任务与设备
 
-**Provider（原生）**：
-Codex/Claude 自己 `config.toml` 里的 `model_providers` 配置，或 CC Switch 自己数据库里的 `providers` 表——两者都是各自软件定义的供应商配置，含义不由本项目决定。
+- **任务定义（Task Definition）**：可重复执行的计划配置，包含日程、时区、提示词序列、New/Resume 目标、权限参数和并发规则。
+- **任务运行（Task Run）**：任务定义的一次实际或跳过的调度尝试；若真正调用原生工具，会关联一个原生会话。
+- **所有者设备（Owner Device）**：运行 Workbench 服务、原生工具进程、原生文件和任务调度的那台设备。远程浏览器仅是该设备的 UI，不产生第二个执行端。
+- **显式迁移（Explicit Migration）**：用户发起并确认的跨设备迁移/交接，传输轻量元数据、选择的原生会话文件和可选的小型任务摘要；不会后台自动同步或合并原生 JSONL。
+- **会话分叉（Session Fork）**：在另一设备复制并继续原生会话文件后形成的独立分支。分叉之间不自动合并；需要结合时使用 Handoff。
 
-**账号（Account）**：
-Codex/Claude 自身的登录身份。本项目不做认证、不读取或保存明文凭据，只用 Workbench 层的 `account_ref`/`account_source`/`account_confidence` 记录可信度不同的归属推断，不构成本项目自己的用户体系。
+## 统计与外部工具
 
-## Workbench 层
+- **会话观测 Token**：从原生会话或受控运行可观察到的 Token 数据；是默认会话用量口径。
+- **代理请求观测**：代理工具记录的请求数、Token、成本、延迟等；可能与原生会话重叠，必须单独标示，不能直接相加。
+- **账户余额 / 订阅窗口**：由各厂商官方连接器或用户配置提供的独立数据类型，不与会话 Token 或代理请求观测混用。
+- **CC Switch 卡片**：用量统计中的可选、独立来源卡片。只能在存在稳定的非敏感只读契约时显示 CC Switch 的代理请求观测；不是核心依赖，也不读取其凭据、内部缓存、订阅窗口或余额缓存。
+- **代理流量**：`features/proxy-traffic-monitor` 提供的 Clash/Mihomo 网络字节、连接、域名和运行状态辅助视图；与模型 Token、请求成本和 CC Switch 数据不同。
 
-**workbench SPA**：
-Vue 3 + TypeScript + Vite 构建的前端单页应用，是 AI Coding Workbench 的用户界面，浏览器根路径 `/` 的默认入口。
-_Avoid_: 前端、workbench 页面
+## 废弃术语
 
-**总览（Overview）**：
-workbench SPA 的默认首页路由（`/`），展示功能入口卡片：已上线功能可点击，未上线功能显示为禁用占位并标注对应 Phase。目标态，落地进度见 `plans/ai-coding-workbench/01-read-only-session-center.md` P1-12。
-_Avoid_: 首页、主页
-
-**会话中心（Session Center）**：
-workbench SPA 内查看、搜索 Codex/Claude 会话记录的页面，目标挂载在 `/sessions`。目标态，当前实现仍挂载在旧路径 `/workbench`，落地进度见 P1-12。
-_Avoid_: 会话页、workbench 页（旧名，P1-12 完成后废弃）
-
-**代理流量监控（Proxy Traffic Monitor）**：
-独立的、零构建的 Clash/Mihomo 流量监控页面，目标挂载在 `/traffic`，技术实现（Vue ESM 直引、无 Node.js 依赖）与 workbench SPA 无关。目标态，当前实现仍在根路径 `/`，落地进度见 P1-12。
-_Avoid_: 旧主页、流量页
-
-**会话族（Conversation Family / ConversationFamily）**：
-Workbench 自己的逻辑分组，纯本项目概念，原生工具没有对应物。一个会话族可能对应多个物理会话副本——同一原生 Session ID 经跨实例复制或分叉后产生。对应 `conversation_families` 表。
-_Avoid_: 会话（容易与会话副本混淆）
-
-**会话副本（Session Copy / SessionCopy）**：
-Workbench 对一个原生会话的只读索引记录和解析结果（族归属、分叉状态等派生字段），不包含独立可写的会话状态。由 `(tool, profile_root, native_session_id, transcript_path)` 唯一标识，对应 `session_copies` 表。
-_Avoid_: session（单独使用时必须先分清是原生会话还是这里的索引记录）
-
-**Profile（ToolProfile）**：
-Workbench 对"一个工具的配置根目录 + 会话根目录"组合的统一抽象，是本项目对"发现了一处原生配置目录"的登记和能力探测结果，不是新账号或新配置系统，对应 `tool_profiles` 表。
-_Avoid_: 账号、实例（容易与 account_ref 混淆）；**且不得与 Codex 原生 `--profile` 配置混淆**——原生 `--profile` 是同一 `CODEX_HOME` 内部更小粒度的配置切换，Claude 无对应机制，两者不是同一层概念
-
-**Turn（Workbench 记录）**：
-`turns` 表对原生 Turn 事件的索引记录，与原生 Turn 一一对应，不设"副本"层——不像会话副本那样可能有多个物理副本、可能分叉，Turn 没有这种多副本/分叉语义。
-_Avoid_: 不要类比 Session 的处理方式给 Turn 设计"TurnCopy"式拆分
-
-**Provider（记录字段）**：
-`tool_profiles`/`session_copies` 上的 `provider` 字段，转录 Codex/Claude 原生配置或 CC Switch 观测到的供应商信息，Workbench 不自行定义新的供应商语义，出现冲突时以原生/CC Switch 记录为准。
-
-**数据质量标记**：
-每个统计指标必须标注为"精确""估算"或"不可用"三态之一；"不可用"显示为 `—`，禁止用 `0` 代替缺失数据。
-_Avoid_: N/A、默认值 0
-
-**远程查看**：
-主设备继续持有并续写原生会话，其他设备通过 SSH 隧道连接同一个运行中的 workbench 实例查看历史，不产生新的会话副本。
-_Avoid_: 远程同步
-
-**复制**：
-用户显式发起的一次性、事务性操作，把一个会话副本的静止内容复制到另一个 profile/设备，产生新的独立 SessionCopy，之后两边各自独立演化。对应 Phase 5 的迁移流水线。
-_Avoid_: 迁移同步、备份（复制不隐含定期性）
-
-**交接**：
-复制的一种用法：复制完成后，明确把"当前活跃写入位置"从源设备转移到目标设备，提示用户不要在源设备继续写入，但不做自动合并，也无法强制阻止用户绕过工作台直接使用原生 CLI。
-_Avoid_: 切换、迁移（迁移在本项目指整个 Phase 5 能力，交接是其中一种用户操作）
-
-**分叉**：
-同一会话族下的两个会话副本各自基于同一历史前缀独立产生了不同的后续内容（`divergence_status = diverged`）。禁止按时间戳交错自动合并，只能由用户选择查看某一方或显式建立新分支。
-_Avoid_: 冲突、脑裂（脑裂描述的是产生分叉的过程，分叉是本项目记录的状态）
-
-**会话同步（禁用词）**：
-不使用这个词，因为它混淆了远程查看、复制、交接三种不同行为。凡是产品文案、代码命名或讨论中出现"同步"描述会话内容跨设备可用性时，必须换成以上三个精确词之一。持续双向原生文件同步（两台设备都能写同一个 native session 并自动合并）已评估为不实现，见架构文档 §19 2026-07-23 决策记录。
-_Avoid_: （本条目本身即为 Avoid 声明）
+- 不再使用“Session Copy（会话副本）”“完整会话投影”或“Conversation Family（会话家族）”作为产品数据模型。
+- “运行中心”不再是一级页面；运行入口在会话工作区，运维/诊断能力分散到总览、用量统计、设置、自动任务和会话高级诊断抽屉。

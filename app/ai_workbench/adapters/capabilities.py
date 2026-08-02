@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import re
 
 from app.ai_workbench.models import CapabilityStatus, ProbeCommand, ToolCapabilities, ToolKind
 
@@ -37,6 +38,29 @@ def _first_line(text: str) -> str | None:
         if stripped:
             return stripped
     return None
+
+
+def _has_option(help_text: str, option: str) -> bool:
+    """Match a CLI option as a token, never by an unrelated substring."""
+    return bool(re.search(rf"(?<![A-Za-z0-9_-]){re.escape(option)}(?![A-Za-z0-9_-])", help_text))
+
+
+def parse_claude_help_capabilities(help_text: str) -> dict[str, bool]:
+    """Derive the supported Claude flags from this exact help snapshot.
+
+    Unknown/new flags remain false until a later read-only probe observes them;
+    no machine's result is treated as a permanent product guarantee.
+    """
+    return {
+        "stream_json": _has_option(help_text, "stream-json"),
+        "resume": _has_option(help_text, "--resume"),
+        "fork": _has_option(help_text, "--fork-session"),
+        "input_stream": _has_option(help_text, "--input-format") and _has_option(help_text, "stream-json"),
+        "max_budget_usd": _has_option(help_text, "--max-budget-usd"),
+        "permission_mode": _has_option(help_text, "--permission-mode"),
+        "allowed_tools": _has_option(help_text, "--allowedTools"),
+        "disallowed_tools": _has_option(help_text, "--disallowedTools"),
+    }
 
 
 def probe_codex(executable: str = "codex") -> ToolCapabilities:
@@ -80,13 +104,7 @@ def probe_claude(executable: str = "claude") -> ToolCapabilities:
     if status is CapabilityStatus.AVAILABLE and help_status is not CapabilityStatus.AVAILABLE:
         status = help_status
 
-    combined = help_text.lower()
-    features = {
-        "stream_json": "stream-json" in combined,
-        "resume": "--resume" in combined or "resume" in combined,
-        "fork": "--fork-session" in combined or "fork" in combined,
-        "input_stream": "--input-format" in combined and "stream-json" in combined,
-    }
+    features = parse_claude_help_capabilities(help_text)
     return ToolCapabilities(
         tool=ToolKind.CLAUDE,
         status=status,
@@ -95,4 +113,3 @@ def probe_claude(executable: str = "claude") -> ToolCapabilities:
         features=features,
         message=None if status is CapabilityStatus.AVAILABLE else version_text,
     )
-

@@ -79,9 +79,14 @@ def test_p3_06_natural_exit_wins_cancel_race(tmp_path):
 
 def test_p3_06_restart_reconciles_stale_run(tmp_path):
     with connect_workbench_db(tmp_path / "runs.db") as conn:
+        conn.execute("INSERT INTO runs (id,tool,profile_id,mode,execution_path,permission_policy_json,budget_policy_json,state,created_at,config_snapshot_json) VALUES ('queued','codex','p','new','codex_exec','{}','{}','queued','now','{}')")
         conn.execute("INSERT INTO runs (id,tool,profile_id,mode,execution_path,permission_policy_json,budget_policy_json,state,created_at,config_snapshot_json) VALUES ('stale','codex','p','new','codex_exec','{}','{}','running','now','{}')")
-        assert reconcile_stale_runs(conn) == 1
+        conn.execute("INSERT INTO runs (id,tool,profile_id,mode,execution_path,permission_policy_json,budget_policy_json,state,created_at,config_snapshot_json) VALUES ('approval','codex','p','new','codex_exec','{}','{}','waiting_approval','now','{}')")
+        assert reconcile_stale_runs(conn) == 2
         assert conn.execute("SELECT state FROM runs WHERE id='stale'").fetchone()[0] == "interrupted"
+        assert conn.execute("SELECT state FROM runs WHERE id='approval'").fetchone()[0] == "interrupted"
+        assert conn.execute("SELECT state FROM runs WHERE id='queued'").fetchone()[0] == "queued"
+        assert conn.execute("SELECT failure_code FROM runs WHERE id='queued'").fetchone()[0] is None
 
 
 def test_p3_06_backpressure_preserves_critical_events_and_gaps():

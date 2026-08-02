@@ -5,8 +5,8 @@ import SessionListItem from '../components/SessionListItem.vue';
 import TimelineEvent from '../components/TimelineEvent.vue';
 import { useWorkbenchStore } from '../stores/workbench';
 import { pretty } from '../utils/event-rendering';
-import RunCenter from '../components/RunCenter.vue';
-import RunComposer from '../components/RunComposer.vue';
+import workbenchMark from '../assets/brand/you-mark.png';
+import emptyWorkbench from '../assets/illustrations/empty-workbench.png';
 
 const store = useWorkbenchStore();
 
@@ -33,7 +33,12 @@ function onSessionScroll(event: Event): void {
 </script>
 
 <template>
-  <main class="workspace">
+  <main class="session-page">
+    <header class="session-page-header">
+      <div><p class="page-kicker">本地会话索引</p><h1>会话中心</h1><p>统一检索并检查本地 Codex、Claude 会话。</p></div>
+      <div class="page-actions"><button class="button-secondary" @click="store.scan" :disabled="store.scanning">{{ store.scanning ? '扫描中' : '扫描会话' }}</button><RouterLink class="button-primary" to="/runs">新建运行</RouterLink></div>
+    </header>
+    <section class="workspace">
     <aside class="sessions-pane">
       <div class="toolbar">
         <select v-model="store.tool" @change="store.loadSessions" aria-label="工具筛选">
@@ -41,7 +46,7 @@ function onSessionScroll(event: Event): void {
           <option value="codex">Codex</option>
           <option value="claude">Claude</option>
         </select>
-        <button @click="store.scan" :disabled="store.scanning">{{ store.scanning ? '扫描中' : '扫描' }}</button>
+        <button class="toolbar-scan" @click="store.scan" :disabled="store.scanning">{{ store.scanning ? '扫描中' : '扫描' }}</button>
       </div>
       <button class="secondary" @click="store.reconcile" :disabled="store.scanning">增量扫描</button>
       <input class="search" v-model="store.search" @keydown.enter="store.loadSessions" placeholder="搜索标题、路径或 Session ID" />
@@ -88,7 +93,10 @@ function onSessionScroll(event: Event): void {
       </section>
 
       <div class="session-list" aria-live="polite" @scroll="onSessionScroll">
-        <div v-if="store.loading" class="empty">加载会话中</div>
+        <div v-if="store.loading" class="state-message state-message--compact" role="status">
+          <img class="state-brand-mark" :src="workbenchMark" alt="" />
+          <span>正在加载会话…</span>
+        </div>
         <div :style="{ height: topSpacer }"></div>
         <SessionListItem
           v-for="session in visibleSessions"
@@ -98,8 +106,13 @@ function onSessionScroll(event: Event): void {
           @select="store.selectSession"
         />
         <div :style="{ height: bottomSpacer }"></div>
-        <div v-if="!store.loading && !store.sessions.length && !store.error" class="empty">
-          没有已索引会话。先点击扫描，或确认 Codex/Claude 默认目录存在。
+        <div v-if="!store.loading && !store.sessions.length && !store.error" class="empty-state empty-state--list">
+          <img :src="emptyWorkbench" alt="" />
+          <div>
+            <h2>{{ store.search || store.tool ? '没有匹配的会话' : '还没有已索引会话' }}</h2>
+            <p>{{ store.search || store.tool ? '调整筛选条件，或重新扫描本地会话。' : '扫描 Codex 或 Claude 的本地目录后，会话会显示在这里。' }}</p>
+            <button type="button" class="button-secondary empty-state-action" :disabled="store.scanning" @click="store.scan">{{ store.scanning ? '正在扫描…' : '扫描会话' }}</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -123,10 +136,9 @@ function onSessionScroll(event: Event): void {
           />
         </div>
       </template>
-      <RunComposer />
-      <RunCenter />
     </section>
 
     <SessionInspector :detail="store.detail" :open="store.inspectorOpen" />
+    </section>
   </main>
 </template>

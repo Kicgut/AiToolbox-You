@@ -8,12 +8,20 @@
 - Use the repo skill `$ai-coding-workbench` for architecture revisions, phase reviews, and phase implementation.
 - The workspace root is not currently a Git repository. Do not assume Git operations are available; discover the actual code root before using Git.
 
+## Codex collaboration context
+
+- Apply repository rules in this order: root `AGENTS.md`, then the nearest nested `AGENTS.md`, then the task-relevant skill; `CONTEXT.md`, architecture, ADRs and Phase plans retain the content ownership described in this file.
+- Project-local `.codex/config.toml` applies only when Codex trusts the project. Do not assume a project configuration changes host-wide policy or creates a repository-owned memory store.
+- Codex memories are personal host state under `CODEX_HOME`; they are not versioned project facts. Never create, commit or rely on a repository `.codex/memories/` directory for mandatory instructions.
+- Use `$ai-coding-workbench` for architecture, plans, session indexing, statistics, execution, scheduling, migration and optional external-tool boundaries. Keep the skill as workflow guidance; keep decisions and evidence in the repository documents it routes to.
+
 ## Phase gate
 
 - Do not implement a phase marked `待审查` or `修订中`. Implementation starts only after the user explicitly approves that phase.
 - Do not begin a later phase automatically after completing the current one.
 - Architecture feedback updates documents and plans first; it does not authorize product-code changes.
 - Record completed task evidence and verification results in the active phase plan.
+- When a Phase reaches user-confirmed completion, update `docs/phase-execution-lessons.md` in the same closeout: record reusable lessons, or explicitly record that no new reusable lesson arose. Important end-to-end lessons discovered before closure may be recorded there as `进行中`, then finalized at completion.
 
 ## GitHub synchronization
 

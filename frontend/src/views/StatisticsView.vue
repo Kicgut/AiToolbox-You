@@ -54,12 +54,11 @@ onMounted(load)
 </script>
 
 <template>
-  <main class="overview statistics-page">
-    <section class="overview-heading">
-      <p class="eyebrow">Phase 2 · Statistics</p>
-      <h2>用量统计</h2>
-      <p>原生会话是基础事实；每个指标都保留来源、质量和可用性。</p>
-    </section>
+  <main class="statistics-page page-frame">
+    <header class="page-header statistics-page-header">
+      <div><p class="page-kicker">可追溯的本地数据</p><h1>用量统计</h1><p>原生会话是基础事实；每个指标都保留来源、质量和可用性。</p></div>
+      <div class="statistics-actions"><span class="statistics-range">当前：所有已归集数据</span><a class="button-secondary" href="/api/ai-workbench/statistics/export.csv">导出 CSV</a></div>
+    </header>
 
     <p v-if="error" class="notice error" role="alert">{{ error }} <button class="mini" @click="load">重试</button></p>
     <p v-else-if="loading" class="empty">加载中…</p>
@@ -71,7 +70,7 @@ onMounted(load)
         <span :class="['quality-badge', connector?.status === 'available' ? 'exact' : 'unavailable']">{{ connector?.status ?? 'unavailable' }}</span>
       </section>
       <section v-if="audit.length" class="connector-audit" aria-label="CC Switch audit"><span>最近探测：{{ audit[0].status }} · {{ audit[0].action }}</span><time>{{ audit[0].observed_at }}</time></section>
-      <section class="metric-grid" aria-label="统计指标">
+      <section class="metric-grid statistics-kpis" aria-label="统计指标">
         <article v-for="(item, key) in overview.metrics" :key="key" class="metric-card">
           <div class="metric-header"><h3>{{ key }}</h3><span :class="costClass(key === 'actual' ? 'actual' : key === 'estimate' ? 'estimate' : 'metric', item)">{{ key === 'actual' ? 'Recorded actual' : key === 'estimate' ? 'API-equivalent estimate' : status(item) }}</span></div>
           <p class="metric-value">{{ display(item) }}</p>
@@ -85,17 +84,19 @@ onMounted(load)
         </article>
       </section>
 
-      <section class="statistics-section" aria-labelledby="trend-heading">
+      <section class="statistics-layout" aria-label="趋势与数据质量">
+      <section class="statistics-section statistics-trend" aria-labelledby="trend-heading">
         <div class="section-heading"><div><p class="eyebrow">Daily rollup</p><h3 id="trend-heading">趋势</h3></div><a href="/api/ai-workbench/statistics/export.csv">导出 CSV</a></div>
         <div class="table-wrap"><table><thead><tr><th>日期</th><th>请求</th><th>输入 token</th><th>输出 token</th><th>质量</th></tr></thead><tbody>
           <tr v-for="point in series" :key="point.bucket_start_utc"><td>{{ point.bucket_date }}</td><td>{{ display(point.metrics.request_count) }}</td><td>{{ display(point.metrics.input_tokens) }}</td><td>{{ display(point.metrics.output_tokens) }}</td><td><span :class="costClass('actual', point.metrics.actual)">Recorded actual {{ display(point.metrics.actual) }}</span> <span :class="costClass('estimate', point.metrics.estimate)">API estimate {{ display(point.metrics.estimate) }}</span><small v-if="point.provenance?.merge_status && point.provenance.merge_status !== 'primary'"> Conflict: {{ point.provenance.merge_status }}</small><small v-if="point.metrics.estimate.formula"> {{ point.metrics.estimate.formula }}</small></td></tr>
           <tr v-if="!series.length"><td colspan="5" class="empty">当前筛选范围没有数据</td></tr>
         </tbody></table></div>
       </section>
+      <section class="statistics-section statistics-quality-panel" aria-labelledby="quality-heading"><div class="section-heading"><div><p class="page-kicker">完整性与来源</p><h3 id="quality-heading">数据来源与质量</h3></div></div><dl class="reliability-list"><template v-for="(item, key) in reliability" :key="key"><dt>{{ key }}</dt><dd><span :class="['quality-badge', item.quality === 'exact' ? 'exact' : 'unavailable']">{{ item.availability }}</span> {{ item.reason_code ?? item.source }}</dd></template></dl><div class="quality-counts"><div v-for="item in quality" :key="`${item.source}-${item.quality}`"><span>{{ item.source }} · {{ item.quality }}</span><strong>{{ item.count }}</strong></div></div></section>
+      </section>
 
       <section class="statistics-columns">
-        <section class="statistics-section" aria-labelledby="breakdown-heading"><div class="section-heading"><h3 id="breakdown-heading">按工具拆分</h3></div><div class="table-wrap"><table><thead><tr><th>工具</th><th>模型</th><th>请求</th><th>输入</th><th>成本/状态</th></tr></thead><tbody><tr v-for="row in breakdown" :key="`${row.tool}-${row.model}-${row.provider}`"><td>{{ row.tool ?? '—' }}</td><td>{{ row.model ?? '—' }}</td><td>{{ display(row.metrics.request_count) }}</td><td>{{ display(row.metrics.input_tokens) }}</td><td><span :class="costClass('actual', row.metrics.actual)">Actual {{ display(row.metrics.actual) }}</span> <span :class="costClass('estimate', row.metrics.estimate)">Estimate {{ display(row.metrics.estimate) }}</span><small v-if="row.metrics.estimate.formula"> {{ row.metrics.estimate.formula }}</small><small v-if="row.conflict_status === 'conflict'"> Conflict ({{ row.conflict_count }})</small></td></tr><tr v-if="!breakdown.length"><td colspan="5" class="empty">暂无拆分数据</td></tr></tbody></table></div></section>
-        <section class="statistics-section" aria-labelledby="quality-heading"><div class="section-heading"><h3 id="quality-heading">数据可靠性</h3></div><dl class="reliability-list"><template v-for="(item, key) in reliability" :key="key"><dt>{{ key }}</dt><dd><span :class="['quality-badge', item.quality === 'exact' ? 'exact' : 'unavailable']">{{ item.availability }}</span> {{ item.reason_code ?? item.source }}</dd></template></dl><div class="quality-counts"><div v-for="item in quality" :key="`${item.source}-${item.quality}`"><span>{{ item.source }} · {{ item.quality }}</span><strong>{{ item.count }}</strong></div></div></section>
+        <section class="statistics-section" aria-labelledby="breakdown-heading"><div class="section-heading"><div><p class="page-kicker">可切换维度</p><h3 id="breakdown-heading">按工具与模型拆分</h3></div></div><div class="table-wrap"><table><thead><tr><th>工具</th><th>模型</th><th>请求</th><th>输入</th><th>成本/状态</th></tr></thead><tbody><tr v-for="row in breakdown" :key="`${row.tool}-${row.model}-${row.provider}`"><td>{{ row.tool ?? '—' }}</td><td>{{ row.model ?? '—' }}</td><td>{{ display(row.metrics.request_count) }}</td><td>{{ display(row.metrics.input_tokens) }}</td><td><span :class="costClass('actual', row.metrics.actual)">Actual {{ display(row.metrics.actual) }}</span> <span :class="costClass('estimate', row.metrics.estimate)">Estimate {{ display(row.metrics.estimate) }}</span><small v-if="row.metrics.estimate.formula"> {{ row.metrics.estimate.formula }}</small><small v-if="row.conflict_status === 'conflict'"> Conflict ({{ row.conflict_count }})</small></td></tr><tr v-if="!breakdown.length"><td colspan="5" class="empty">暂无拆分数据</td></tr></tbody></table></div></section>
       </section>
       <section v-if="conflicts.length" class="statistics-section" aria-labelledby="conflicts-heading"><div class="section-heading"><h3 id="conflicts-heading">观测冲突与关联</h3></div><div class="conflict-list"><details v-for="item in conflicts" :key="item.id"><summary>{{ item.link_kind }} · {{ item.confidence }} · {{ item.created_at }}</summary><pre>{{ JSON.stringify(item.details, null, 2) }}</pre></details></div></section>
     </template>

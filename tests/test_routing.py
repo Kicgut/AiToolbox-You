@@ -23,7 +23,11 @@ def test_workbench_spa_references_built_assets_that_are_served():
     root = client.get("/", headers=HTML_HEADERS)
     asset_paths = re.findall(r'(?:src|href)="(/static/workbench/assets/[^"]+)"', root.text)
 
-    assert len(asset_paths) == 2
+    script_paths = [path for path in asset_paths if path.endswith(".js")]
+    stylesheet_paths = [path for path in asset_paths if path.endswith(".css")]
+
+    assert len(script_paths) == 1
+    assert len(stylesheet_paths) == 1
     assert all(client.get(path).status_code == 200 for path in asset_paths)
 
 

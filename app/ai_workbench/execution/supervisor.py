@@ -69,6 +69,25 @@ class _WindowsJob:
             self.handle = None
 
 
+def attach_process_to_job(process: subprocess.Popen[Any]) -> _WindowsJob:
+    """Create a kill-on-close Job Object and attach one managed CLI process."""
+    job = _WindowsJob()
+    try:
+        job.assign(process)
+    except Exception:
+        job.close()
+        raise
+    return job
+
+
+def terminate_process_job(job: _WindowsJob | None) -> None:
+    """End and release a coordinator-owned Job Object when one is available."""
+    if job is None:
+        return
+    job.terminate()
+    job.close()
+
+
 class RunState:
     """Serialize cancellation and terminal-state decisions for one run."""
 

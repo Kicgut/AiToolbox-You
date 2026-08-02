@@ -28,7 +28,11 @@ def merge_decision(left: dict[str, Any], right: dict[str, Any]) -> MergeDecision
     same_context = (left.get("session_id") or left.get("native_session_id")) == (right.get("session_id") or right.get("native_session_id"))
     if same_context and left.get("model") == right.get("model") and left.get("event_at") and right.get("event_at") and not token_pair_present:
         if abs((_parse(left["event_at"]) - _parse(right["event_at"])).total_seconds()) <= 2:
-            return MergeDecision("weak_match", "mark_only_count_independently", reason_code="weak_session_model_time_match")
+            return MergeDecision(
+                "conflict", "count_primary_only_until_review",
+                conflict_group_id=f"conflict:weak:{left.get('native_session_id') or left.get('session_id')}",
+                reason_code="weak_session_model_time_match",
+            )
     return MergeDecision("unmatched", "count_independently", reason_code="no_stable_identity")
 
 

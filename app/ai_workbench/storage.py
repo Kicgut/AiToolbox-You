@@ -371,7 +371,7 @@ PHASE3_EXECUTION_DDL = [
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT NOT NULL,
         native_request_id TEXT NOT NULL, operation TEXT NOT NULL,
         target_summary TEXT NOT NULL, risk_level TEXT NOT NULL,
-        command_argv_json TEXT, cwd TEXT, affected_paths_json TEXT, reason TEXT,
+        command_argv_json TEXT, cwd TEXT, affected_paths_json TEXT, network_targets_json TEXT, reason TEXT,
         expires_at TEXT, state TEXT NOT NULL, decision TEXT,
         decided_at TEXT, decided_by TEXT, disconnect_policy TEXT NOT NULL DEFAULT 'wait',
         FOREIGN KEY(run_id) REFERENCES runs(id), FOREIGN KEY(step_id) REFERENCES run_steps(id)
@@ -408,6 +408,12 @@ PHASE3_EXECUTION_DDL = [
         size_bytes INTEGER NOT NULL, mime_type TEXT, redaction_state TEXT NOT NULL,
         created_at TEXT NOT NULL, expires_at TEXT,
         FOREIGN KEY(run_id) REFERENCES runs(id), FOREIGN KEY(step_id) REFERENCES run_steps(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_capability_baselines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL
     )
     """,
     """
@@ -469,7 +475,8 @@ def connect_workbench_db(path: Path | None = None) -> sqlite3.Connection:
         required_tables = {
             "observations", "usage_records", "daily_rollups", "pricing_snapshots",
             "runs", "run_steps", "approval_requests", "run_events", "run_stream_cursors",
-            "session_writer_leases", "run_artifacts", "real_execution_authorizations",
+            "session_writer_leases", "run_artifacts", "runtime_capability_baselines",
+            "real_execution_authorizations",
         }
         if required_tables.issubset(existing_tables):
             return conn
@@ -533,6 +540,7 @@ def _ensure_phase3_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_client_request ON runs(client_request_id) WHERE client_request_id IS NOT NULL")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_request_body ON runs(client_request_id, request_body_hash) WHERE client_request_id IS NOT NULL")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_native_request ON approval_requests(run_id, native_request_id)")
+    _ensure_column(conn, "approval_requests", "network_targets_json", "TEXT")
 
 
 RUN_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "interrupted"}
@@ -552,6 +560,28 @@ def validate_run_transition(current_state: str, proposed_state: str) -> None:
         raise ValueError(f"illegal run state transition: {current_state} -> {proposed_state}")
 
 
+class RunTransitionConflict(RuntimeError):
+    """The durable state changed after a coordinator path observed it."""
+
+
+def compare_and_set_run_state(conn: sqlite3.Connection, *, run_id: str, expected_state: str,
+                              proposed_state: str, updates: dict[str, object]) -> None:
+    """Apply one already-validated state transition without a lost update.
+
+    Callers own the surrounding SQLite transaction so the state event and run
+    mutation remain one atomic fact.
+    """
+    if expected_state != proposed_state:
+        validate_run_transition(expected_state, proposed_state)
+    assignments = [f"{column}=?" for column in updates]
+    values = [*updates.values(), proposed_state, run_id, expected_state]
+    cursor = conn.execute(
+        f"UPDATE runs SET {', '.join(assignments)}, state=? WHERE id=? AND state=?", values
+    )
+    if cursor.rowcount != 1:
+        raise RunTransitionConflict(f"run state changed before transition: {run_id}")
+
+
 class SessionBusyError(RuntimeError):
     """Raised when another non-expired run owns a physical session writer lease."""
 
@@ -559,9 +589,10 @@ class SessionBusyError(RuntimeError):
 
 
 def acquire_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str, run_id: str,
-                         owner_id: str, now: str, expires_at: str) -> int:
+                         owner_id: str, now: str, expires_at: str, transactional: bool = True) -> int:
     """Acquire or take over an expired writer lease and return its generation."""
-    conn.execute("BEGIN IMMEDIATE")
+    if transactional:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         row = conn.execute("SELECT * FROM session_writer_leases WHERE physical_session_key = ?",
                            (physical_session_key,)).fetchone()
@@ -576,10 +607,12 @@ def acquire_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str,
             heartbeat_at=excluded.heartbeat_at, expires_at=excluded.expires_at,
             lease_generation=excluded.lease_generation""",
             (physical_session_key, run_id, owner_id, now, now, expires_at, generation))
-        conn.commit()
+        if transactional:
+            conn.commit()
         return generation
     except Exception:
-        conn.rollback()
+        if transactional:
+            conn.rollback()
         raise
 
 
@@ -596,12 +629,17 @@ def heartbeat_writer_lease(conn: sqlite3.Connection, *, physical_session_key: st
 
 
 def release_writer_lease(conn: sqlite3.Connection, *, physical_session_key: str,
-                         run_id: str, lease_generation: int) -> None:
-    """Release a lease only for its current run and generation."""
-    conn.execute("""DELETE FROM session_writer_leases
+                         run_id: str, lease_generation: int) -> bool:
+    """Release a lease only for its current run and generation.
+
+    The boolean result makes a stale generation observable to callers instead
+    of silently treating a lost lease as a successful release.
+    """
+    cur = conn.execute("""DELETE FROM session_writer_leases
         WHERE physical_session_key=? AND run_id=? AND lease_generation=?""",
         (physical_session_key, run_id, lease_generation))
     conn.commit()
+    return cur.rowcount == 1
 
 
 def _ensure_statistics_schema(conn: sqlite3.Connection) -> None:

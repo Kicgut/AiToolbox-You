@@ -462,24 +462,24 @@ def _index_transcript(conn: sqlite3.Connection, profile: DiscoveredProfile, tran
         """,
         (str(transcript), profile.id, stat.st_size, stat.st_mtime_ns, offset, offset, content_hash, PARSER_VERSION, now),
     )
-    _persist_usage(conn, profile.tool.value, transcript, native_session_id, lines)
+    _persist_usage(conn, profile.tool.value, transcript, native_session_id, lines, profile_id=profile.id)
     _update_divergence(conn, family_id)
     return len(events)
 
 
-def _persist_usage(conn: sqlite3.Connection, tool: str, transcript: Path, native_session_id: str, lines: list[str]) -> None:
+def _persist_usage(conn: sqlite3.Connection, tool: str, transcript: Path, native_session_id: str, lines: list[str], *, profile_id: str | None = None) -> None:
     """Materialize native usage facts without changing the source transcript."""
     usage_events, _ = parse_usage_lines(lines, tool=tool, source=str(transcript), native_session_id=native_session_id, parser_version=f"{tool}-jsonl-v1")
     for event in usage_events:
         observed_at = event.event_at or "1970-01-01T00:00:00Z"
         observation_id = hashlib.sha256(f"{event.source_locator}|{event.dedup_key}".encode()).hexdigest()
         payload_hash = hashlib.sha256(json.dumps(event.as_dict(), sort_keys=True).encode()).hexdigest()
-        conn.execute("""INSERT OR IGNORE INTO observations(id,observation_kind,source,source_locator,native_session_id,native_event_id,request_id,tool,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (observation_id, "session", f"{tool}_jsonl", event.source_locator, native_session_id, event.native_event_id, event.request_id, tool, observed_at, payload_hash, event.quality, event.parser_version, "parsed", observed_at))
+        conn.execute("""INSERT OR IGNORE INTO observations(id,observation_kind,source,source_locator,native_session_id,native_turn_id,native_event_id,request_id,tool,profile_ref,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (observation_id, "session", f"{tool}_jsonl", event.source_locator, native_session_id, event.turn_id, event.native_event_id, event.request_id, tool, profile_id, observed_at, payload_hash, event.quality, event.parser_version, "parsed", observed_at))
         merge_status = "primary"
         if event.request_id:
             prior = conn.execute("""SELECT u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,o.request_id,o.native_session_id
                 FROM observations o JOIN usage_records u ON u.observation_id=o.id
-                WHERE o.request_id=? LIMIT 1""", (event.request_id,)).fetchone()
+                WHERE o.tool=? AND o.profile_ref IS ? AND o.native_session_id=? AND o.request_id=? LIMIT 1""", (tool, profile_id, native_session_id, event.request_id)).fetchone()
             if prior is not None:
                 decision = merge_decision(event.as_dict(), dict(prior))
                 merge_status = "duplicate" if decision.status == "duplicate" else "conflict" if decision.status == "conflict" else "primary"
@@ -531,7 +531,7 @@ def _append_transcript_delta(conn: sqlite3.Connection, profile: DiscoveredProfil
         now = int(time.time())
         conn.execute("UPDATE session_copies SET event_count=?, updated_at=?, content_hash=?, head_event_hash=? WHERE id=?", (start_seq + len(events), now, digest.hexdigest(), hashlib.sha1(f"{copy['id']}:{start_seq + len(events)}".encode()).hexdigest(), copy["id"]))
         conn.execute("UPDATE source_checkpoints SET file_size=?,mtime_ns=?,parsed_offset=?,last_complete_line_offset=?,content_hash=?,last_indexed_at=?,status='active' WHERE path=?", (stat.st_size, stat.st_mtime_ns, new_offset, new_offset, digest.hexdigest(), now, str(transcript)))
-        _persist_usage(conn, profile.tool.value, transcript, copy["native_session_id"], lines)
+        _persist_usage(conn, profile.tool.value, transcript, copy["native_session_id"], lines, profile_id=profile.id)
         _update_divergence(conn, copy["family_id"])
         return len(events)
     except (OSError, UnicodeError):

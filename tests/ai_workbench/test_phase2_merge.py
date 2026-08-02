@@ -38,12 +38,3 @@ def test_pricing_sources_are_returned_side_by_side_when_prices_conflict(tmp_path
         values = pricing_snapshot_sources(conn, model="m")
         assert {value["source_kind"] for value in values} == {"manual", "cc_switch"}
         assert {value["conflict_status"] for value in values} == {"conflict"}
-
-
-def test_weak_match_is_mark_only_and_does_not_count_tokens_as_duplicate():
-    result = merge_decision(
-        {"native_session_id": "s", "model": "m", "event_at": "2026-01-01T00:00:00Z", "input_tokens": None},
-        {"session_id": "s", "model": "m", "event_at": "2026-01-01T00:00:02Z", "input_tokens": None},
-    )
-    assert result.status == "weak_match"
-    assert result.counting_policy == "mark_only_count_independently"

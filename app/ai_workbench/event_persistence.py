@@ -1,13 +1,13 @@
 """Persistence and Phase 2 usage wiring for live Workbench events."""
 from __future__ import annotations
-import hashlib, json, os, sqlite3
+import hashlib, json, os, re, sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 from app.ai_workbench.merge import merge_decision
 from app.ai_workbench.runtime_stream import runtime_broadcaster
-from app.ai_workbench.storage import validate_run_transition
+from app.ai_workbench.storage import compare_and_set_run_state
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -19,7 +19,16 @@ _RUN_UPDATE_COLUMNS = {
     "cancel_requested_at", "capabilities_snapshot_json",
 }
 _INLINE_EVENT_BYTES = 64 * 1024
-_SENSITIVE_KEY_PARTS = ("token", "secret", "password", "cookie", "authorization", "api_key", "apikey")
+_SENSITIVE_KEY_PARTS = (
+    "token", "secret", "password", "cookie", "authorization", "api_key", "apikey",
+    "environment", "env_vars", "envvars",
+)
+_SENSITIVE_EXACT_KEYS = {"env"}
+_INLINE_SECRET_PATTERNS = (
+    (re.compile(r"(?i)(\b(?:authorization\s*:\s*bearer|bearer)\s+)[A-Za-z0-9._~+/=-]+"), r"\1[redacted]"),
+    (re.compile(r"(?i)(\b(?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+"), r"\1[redacted]"),
+    (re.compile(r"(?i)(\bcookie\s*:\s*)[^\r\n]+"), r"\1[redacted]"),
+)
 
 
 def persist_event(conn: sqlite3.Connection, event: dict[str, Any], *,
@@ -42,12 +51,12 @@ def persist_event(conn: sqlite3.Connection, event: dict[str, Any], *,
             conn.execute("UPDATE run_stream_cursors SET next_sequence_no=?,last_persisted_sequence_no=?,updated_at=? WHERE run_id=?", (sequence + 1, sequence, now, run_id))
         else:
             conn.execute("INSERT INTO run_stream_cursors VALUES(?,?,?,?,?)", (run_id, sequence + 1, sequence, 0, now))
+        current_state = None
         if run_state is not None:
             current = conn.execute("SELECT state FROM runs WHERE id=?", (run_id,)).fetchone()
             if current is None:
                 raise KeyError(run_id)
-            if current["state"] != run_state:
-                validate_run_transition(current["state"], run_state)
+            current_state = current["state"]
         assignments = ["last_sequence_no=?", "updated_at=?"]
         arguments: list[Any] = [sequence, now]
         for column, value in (run_updates or {}).items():
@@ -55,18 +64,34 @@ def persist_event(conn: sqlite3.Connection, event: dict[str, Any], *,
                 raise ValueError(f"unsupported run update column: {column}")
             assignments.append(f"{column}=?")
             arguments.append(value)
-        if run_state is not None:
-            assignments.append("state=?")
-            arguments.append(run_state)
         if step_state is not None and saved.get("step_id"):
             conn.execute("UPDATE run_steps SET state=? WHERE id=? AND run_id=?", (step_state, saved["step_id"], run_id))
         conn.execute("INSERT INTO run_events(event_id,run_id,step_id,session_id,sequence_no,event_type,timestamp,payload_json,source_tool,source_event_type,raw_json,persisted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (saved["event_id"], run_id, saved.get("step_id"), saved.get("session_id"), sequence, kind, saved["timestamp"], json.dumps(payload, sort_keys=True), saved.get("source_tool", "unknown"), saved.get("source_event_type"), json.dumps(saved.get("raw", payload), sort_keys=True), now))
-        conn.execute(f"UPDATE runs SET {', '.join(assignments)} WHERE id=?", (*arguments, run_id))
+        if run_state is None:
+            conn.execute(f"UPDATE runs SET {', '.join(assignments)} WHERE id=?", (*arguments, run_id))
+        else:
+            updates = dict(zip((item.removesuffix("=?") for item in assignments), arguments))
+            compare_and_set_run_state(conn, run_id=run_id, expected_state=str(current_state),
+                                      proposed_state=run_state, updates=updates)
         conn.commit()
     except Exception:
         conn.rollback(); raise
     if kind == "usage.updated": record_live_usage(conn, saved)
-    if broadcast: broadcast(saved)
+    if broadcast:
+        try:
+            broadcast(saved)
+        except Exception:
+            # Durable persistence is already committed.  Do not turn a live
+            # fan-out failure into a fake execution failure; reconnect replay
+            # remains authoritative and the broadcast cursor stays unchanged.
+            pass
+        else:
+            conn.execute(
+                "UPDATE run_stream_cursors SET last_broadcast_sequence_no=?,updated_at=? "
+                "WHERE run_id=? AND last_broadcast_sequence_no<?",
+                (sequence, _now(), run_id, sequence),
+            )
+            conn.commit()
     return saved
 
 
@@ -112,12 +137,50 @@ def _externalize_large_event(conn: sqlite3.Connection, event: dict[str, Any]) ->
     event["raw"] = {"artifact": reference}
 
 
+def cleanup_expired_artifacts(conn: sqlite3.Connection, *, now: str | None = None) -> dict[str, int]:
+    """Remove only expired, registered files below this database's artifact root.
+
+    A missing artifact is still removed from the index so retries stay
+    idempotent.  A malformed/outside path is deliberately retained and counted
+    as unsafe rather than allowing database content to select an arbitrary
+    filesystem deletion target.
+    """
+    database = next((Path(row[2]) for row in conn.execute("PRAGMA database_list") if row[1] == "main" and row[2]), None)
+    if database is None:
+        raise RuntimeError("unable to locate workbench database for artifact cleanup")
+    root = (database.parent / "run-artifacts").resolve()
+    cutoff = now or _now()
+    removed = missing = unsafe = 0
+    rows = conn.execute(
+        "SELECT id,relative_path FROM run_artifacts WHERE expires_at IS NOT NULL AND expires_at <= ?", (cutoff,)
+    ).fetchall()
+    for row in rows:
+        candidate = (database.parent / row["relative_path"]).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            unsafe += 1
+            continue
+        if candidate.is_file():
+            candidate.unlink()
+            removed += 1
+        else:
+            missing += 1
+        conn.execute("DELETE FROM run_artifacts WHERE id=?", (row["id"],))
+    if rows:
+        conn.commit()
+    return {"removed": removed, "missing": missing, "unsafe": unsafe}
+
+
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): "[redacted]" if any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS) else _redact(item)
+        return {str(key): "[redacted]" if (str(key).lower() in _SENSITIVE_EXACT_KEYS or any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS)) else _redact(item)
                 for key, item in value.items()}
     if isinstance(value, list):
         return [_redact(item) for item in value]
+    if isinstance(value, str):
+        for pattern, replacement in _INLINE_SECRET_PATTERNS:
+            value = pattern.sub(replacement, value)
     return value
 
 
@@ -149,23 +212,56 @@ def persist_status_change(conn: sqlite3.Connection, *, run_id: str, step_id: str
         run_updates=run_updates,
     )
 
-def resync_events(conn: sqlite3.Connection, run_id: str, last_sequence_no: int) -> dict[str, Any]:
-    """Return events after a reconnect cursor and report persisted sequence gaps."""
-    rows = conn.execute("SELECT * FROM run_events WHERE run_id=? ORDER BY sequence_no", (run_id,)).fetchall()
+def _event_row(row: sqlite3.Row) -> dict[str, Any]:
+    item = dict(row)
+    item["payload"] = json.loads(item.pop("payload_json"))
+    return item
+
+
+def resync_events(conn: sqlite3.Connection, run_id: str, last_sequence_no: int, *, limit: int = 200,
+                  up_to_sequence_no: int | None = None) -> dict[str, Any]:
+    """Return a bounded durable tail after a reconnect cursor.
+
+    The stream cursor is the source of truth.  Bounded replay prevents one
+    reconnect from loading an unbounded transcript; callers can continue from
+    ``next_sequence_no`` until the returned page is exhausted.
+    """
+    limit = max(1, min(int(limit), 500))
+    if up_to_sequence_no is None:
+        rows = conn.execute("SELECT * FROM run_events WHERE run_id=? ORDER BY sequence_no", (run_id,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM run_events WHERE run_id=? AND sequence_no<=? ORDER BY sequence_no", (run_id, up_to_sequence_no)).fetchall()
     numbers = [int(r["sequence_no"]) for r in rows]; contiguous = numbers == list(range(1, max(numbers, default=0) + 1))
     events = []
     for r in rows:
         if int(r["sequence_no"]) > last_sequence_no:
-            item = dict(r); item["payload"] = json.loads(item.pop("payload_json")); events.append(item)
-    return {"events": events, "resync_required": not contiguous}
+            events.append(_event_row(r))
+            if len(events) >= limit:
+                break
+    next_sequence_no = events[-1]["sequence_no"] if events else last_sequence_no
+    return {"events": events, "resync_required": not contiguous,
+            "next_sequence_no": next_sequence_no,
+            "has_more": any(int(r["sequence_no"]) > next_sequence_no for r in rows)}
+
+
+def list_events_before(conn: sqlite3.Connection, run_id: str, before_sequence_no: int, *, limit: int = 200) -> dict[str, Any]:
+    """Return a bounded older-history page in chronological order."""
+    limit = max(1, min(int(limit), 500))
+    rows = conn.execute(
+        "SELECT * FROM run_events WHERE run_id=? AND sequence_no<? ORDER BY sequence_no DESC LIMIT ?",
+        (run_id, before_sequence_no, limit),
+    ).fetchall()
+    events = [_event_row(row) for row in reversed(rows)]
+    return {"events": events, "has_more": bool(events and events[0]["sequence_no"] > 1)}
 
 def record_live_usage(conn: sqlite3.Connection, event: dict[str, Any]) -> str:
     """Write a live usage observation and one primary record for an exact native match."""
     payload = dict(event.get("payload") or {}); tool = event.get("source_tool") or payload.get("tool"); session = event.get("session_id") or payload.get("native_session_id")
+    profile_ref = event.get("profile_id") or payload.get("profile_id") or payload.get("profile_ref")
     request_id = payload.get("request_id") or payload.get("requestId"); turn_id = payload.get("native_turn_id") or payload.get("turn_id") or payload.get("turnId"); observed = event.get("timestamp") or _now()
     key = hashlib.sha256(f"live|{event['event_id']}".encode()).hexdigest(); dedup = hashlib.sha256(json.dumps([tool, session, request_id, turn_id, payload], sort_keys=True).encode()).hexdigest()
-    conn.execute("INSERT OR IGNORE INTO observations(id,observation_kind,source,native_session_id,native_turn_id,native_event_id,request_id,tool,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (key, "supervised_run", "workbench_live", session, turn_id, event["event_id"], request_id, tool, observed, hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(), "exact", "workbench-live-v1", "parsed", observed))
-    prior = conn.execute("SELECT u.* ,o.native_session_id,o.request_id FROM usage_records u JOIN observations o ON o.id=u.observation_id WHERE o.tool=? AND o.native_session_id=? AND ((? IS NOT NULL AND o.request_id=?) OR (? IS NOT NULL AND o.native_turn_id=?)) LIMIT 1", (tool, session, request_id, request_id, turn_id, turn_id)).fetchone()
+    conn.execute("INSERT OR IGNORE INTO observations(id,observation_kind,source,native_session_id,native_turn_id,native_event_id,request_id,tool,profile_ref,observed_at,payload_hash,quality,parser_version,parse_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (key, "supervised_run", "workbench_live", session, turn_id, event["event_id"], request_id, tool, profile_ref, observed, hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(), "exact", "workbench-live-v1", "parsed", observed))
+    prior = conn.execute("SELECT u.* ,o.native_session_id,o.request_id FROM usage_records u JOIN observations o ON o.id=u.observation_id WHERE o.tool=? AND o.profile_ref IS ? AND o.native_session_id=? AND ((? IS NOT NULL AND o.request_id=?) OR (? IS NOT NULL AND o.native_turn_id=?)) LIMIT 1", (tool, profile_ref, session, request_id, request_id, turn_id, turn_id)).fetchone()
     status = "primary"
     if prior:
         decision = merge_decision({**payload, "request_id": request_id, "native_session_id": session, "event_at": observed}, dict(prior)); status = "duplicate" if decision.status == "duplicate" else "conflict" if decision.status == "conflict" else "primary"

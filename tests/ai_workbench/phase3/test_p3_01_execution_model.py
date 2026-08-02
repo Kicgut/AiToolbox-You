@@ -4,9 +4,12 @@ import threading
 import pytest
 
 from app.ai_workbench.storage import (
+    RunTransitionConflict,
     SessionBusyError,
     acquire_writer_lease,
+    compare_and_set_run_state,
     connect_workbench_db,
+    release_writer_lease,
     validate_run_transition,
 )
 
@@ -30,6 +33,14 @@ def test_p3_01_illegal_run_transition_does_not_mutate_state(tmp_path):
         assert conn.execute("SELECT state FROM runs WHERE id='r1'").fetchone()[0] == "running"
 
 
+def test_p3_01_state_compare_and_set_rejects_a_stale_writer(tmp_path):
+    with connect_workbench_db(tmp_path / "workbench.db") as conn:
+        conn.execute("INSERT INTO runs (id, tool, profile_id, mode, execution_path, permission_policy_json, budget_policy_json, state, created_at, config_snapshot_json) VALUES ('r1','codex','p1','new','codex_exec','{}','{}','running','now','{}')")
+        compare_and_set_run_state(conn, run_id="r1", expected_state="running", proposed_state="succeeded", updates={"updated_at": "later"})
+        with pytest.raises(RunTransitionConflict):
+            compare_and_set_run_state(conn, run_id="r1", expected_state="running", proposed_state="cancel_requested", updates={"updated_at": "later"})
+
+
 def test_p3_01_expired_lease_takeover_and_live_lease_busy(tmp_path):
     db = tmp_path / "workbench.db"
     with connect_workbench_db(db) as conn:
@@ -44,6 +55,14 @@ def test_p3_01_expired_lease_takeover_and_live_lease_busy(tmp_path):
                                       owner_id="o2", now="2026-01-01T00:02:00Z",
                                       expires_at="2026-01-01T00:03:00Z")
         assert second == first + 1
+
+
+def test_p3_01_release_reports_stale_generation_without_deleting_current_lease(tmp_path):
+    with connect_workbench_db(tmp_path / "workbench.db") as conn:
+        acquire_writer_lease(conn, physical_session_key="codex|p|s", run_id="r1", owner_id="o1", now="2026-01-01T00:00:00Z", expires_at="2026-01-01T00:01:00Z")
+        assert release_writer_lease(conn, physical_session_key="codex|p|s", run_id="r1", lease_generation=99) is False
+        assert conn.execute("SELECT run_id, lease_generation FROM session_writer_leases WHERE physical_session_key='codex|p|s'").fetchone()["lease_generation"] == 1
+        assert release_writer_lease(conn, physical_session_key="codex|p|s", run_id="r1", lease_generation=1) is True
 
 
 def test_p3_01_concurrent_lease_acquisition_has_one_winner(tmp_path):

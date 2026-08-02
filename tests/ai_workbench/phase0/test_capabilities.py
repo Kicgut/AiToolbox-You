@@ -1,5 +1,5 @@
 from app.ai_workbench.adapters import capabilities
-from app.ai_workbench.adapters.capabilities import probe_claude, probe_codex
+from app.ai_workbench.adapters.capabilities import parse_claude_help_capabilities, probe_claude, probe_codex
 from app.ai_workbench.models import CapabilityStatus
 
 
@@ -46,3 +46,12 @@ def test_claude_probe_preserves_timeout_status(monkeypatch):
 
     assert result.status == CapabilityStatus.TIMEOUT
     assert result.message == "timeout"
+
+
+def test_claude_help_parser_is_conservative_for_unknown_versions():
+    features = parse_claude_help_capabilities("Options: --resume <id> --output-format stream-json --fork-session\nlegacy-resume-text")
+    assert features["resume"] is True
+    assert features["stream_json"] is True
+    assert features["fork"] is True
+    assert features["max_budget_usd"] is False
+    assert features["allowed_tools"] is False

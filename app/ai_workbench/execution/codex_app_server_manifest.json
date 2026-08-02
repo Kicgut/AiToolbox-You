@@ -1,0 +1,25 @@
+{
+  "schema_version": "v2",
+  "schema_sha256": "28897c204dd8f2f9c281bd676856fab0d508542b1d87d78447fd210bfe6e1b20",
+  "experimental_enabled": false,
+  "client_methods": [
+    "initialize",
+    "initialized",
+    "thread/list",
+    "thread/read",
+    "thread/start",
+    "thread/resume",
+    "thread/fork",
+    "turn/start",
+    "turn/interrupt"
+  ],
+  "server_request_methods": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval"
+  ],
+  "required_params": {
+    "initialize": ["clientInfo"],
+    "turn/start": ["threadId", "input"],
+    "turn/interrupt": ["threadId", "turnId"]
+  }
+}

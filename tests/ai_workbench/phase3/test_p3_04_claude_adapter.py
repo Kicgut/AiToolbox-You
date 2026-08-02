@@ -60,6 +60,13 @@ def test_budget_permission_and_tool_lists_are_real_argv():
     a.stream_events(step)
 
 
+def test_prompt_is_delivered_on_stdin_not_in_the_process_argv():
+    secret_prompt = "not-visible-in-argv"
+    step = adapter().start_session(secret_prompt)
+    assert secret_prompt not in step.argv
+    ClaudeAdapter((PYTHON, str(FIXTURE), "claude")).stream_events(step)
+
+
 def test_claude_and_codex_structural_event_shapes_match():
     claude = adapter().stream_events(adapter().start_session("x")).events
     codex = CodexExecClient((PYTHON, str(FIXTURE), "exec")).run("x").events

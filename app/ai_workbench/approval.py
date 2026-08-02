@@ -15,7 +15,7 @@ def _now() -> str:
 def create_approval(conn: Any, *, run_id: str, step_id: str, native_request_id: str,
                     operation: str, target_summary: str, risk_level: str,
                     command_argv: list[str] | None = None, cwd: str | None = None,
-                    affected_paths: list[str] | None = None, reason: str | None = None,
+                    affected_paths: list[str] | None = None, network_targets: list[str] | None = None, reason: str | None = None,
                     expires_at: str | None = None) -> dict[str, Any]:
     """Create an idempotent pending request; disconnects never decide it."""
     row = conn.execute(
@@ -27,12 +27,12 @@ def create_approval(conn: Any, *, run_id: str, step_id: str, native_request_id: 
     request_id = str(uuid4())
     conn.execute("""INSERT INTO approval_requests
         (id,run_id,step_id,native_request_id,operation,target_summary,risk_level,
-         command_argv_json,cwd,affected_paths_json,reason,expires_at,state,disconnect_policy)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'wait')""", (
+         command_argv_json,cwd,affected_paths_json,network_targets_json,reason,expires_at,state,disconnect_policy)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'wait')""", (
         request_id, run_id, step_id, native_request_id, operation, target_summary,
         risk_level, json.dumps(command_argv) if command_argv is not None else None,
         cwd, json.dumps(affected_paths) if affected_paths is not None else None,
-        reason, expires_at, "pending"))
+        json.dumps(network_targets) if network_targets is not None else None, reason, expires_at, "pending"))
     conn.commit()
     return dict(conn.execute("SELECT * FROM approval_requests WHERE id=?", (request_id,)).fetchone())
 

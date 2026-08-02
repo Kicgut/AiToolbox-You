@@ -1,26 +1,26 @@
 :root {
   color-scheme: light;
-  --color-bg: #f5f7fb;
+  --color-bg: #f6f7fb;
   --color-panel: #ffffff;
-  --color-panel-muted: #eef2f7;
+  --color-panel-muted: #f0f2f7;
   --color-text: #172033;
-  --color-text-muted: #5f6b7c;
-  --color-text-quiet: #8792a2;
-  --color-border: #dbe2ec;
-  --color-accent: #2563eb;
-  --color-accent-soft: #e8f0ff;
+  --color-text-muted: #647087;
+  --color-text-quiet: #8a94a6;
+  --color-border: #e1e5ee;
+  --color-accent: #6366f1;
+  --color-accent-soft: #eeefff;
   --color-danger: #b42318;
   --color-danger-soft: #fff0ee;
   --color-success: #087443;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
-  --radius-control: 6px;
-  --radius-panel: 8px;
+  --radius-control: 10px;
+  --radius-panel: 16px;
   --control-disabled-opacity: 0.6;
-  --motion-fast: 140ms ease-out;
-  --motion-panel: 180ms ease-out;
+  --motion-fast: 160ms cubic-bezier(.2,.8,.2,1);
+  --motion-panel: 220ms cubic-bezier(.2,.8,.2,1);
 }

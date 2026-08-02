@@ -5,9 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
+from app.ai_workbench.storage import acquire_writer_lease, release_writer_lease
+from app.ai_workbench.execution.codex_runtime import resolve_codex_executable
+from app.ai_workbench.execution.claude_runtime import resolve_claude_executable
 
 
 class ComposerError(ValueError):
@@ -16,6 +20,65 @@ class ComposerError(ValueError):
     def __init__(self, message: str, code: str = "invalid_run_request") -> None:
         super().__init__(message)
         self.code = code
+
+
+def execution_capabilities_for(tool: str) -> dict[str, Any]:
+    """Capabilities that the current adapters can actually guarantee at submit time.
+
+    This is intentionally conservative: a requested constraint is rejected when
+    an adapter fallback could silently drop it.
+    """
+    common = {
+        "actions": ["new", "resume", "fork"],
+        "structured_events": True,
+        "model_selection": True,
+        "max_duration": "enforced",
+        "max_turns": 1,
+        "observed_budget_fields": ["max_total_tokens_observed", "max_cost_minor_observed"],
+        "limit_strengths": {
+            "max_turns": "hard", "max_duration_seconds": "hard",
+            "max_total_tokens_observed": "observed_only", "max_cost_minor_observed": "observed_only",
+        },
+    }
+    if tool == "codex":
+        return {**common, "native_approval": True, "sandbox": ["read-only"],
+                "approval_policy": ["on-request", "never", "untrusted"],
+                "tool_allow_deny_lists": False, "max_budget_usd": False,
+                "limit_strengths": {**common["limit_strengths"], "max_budget_usd": "unsupported"}}
+    if tool == "claude":
+        return {**common, "native_approval": False, "sandbox": [],
+                "tool_allow_deny_lists": True, "max_budget_usd": True,
+                "limit_strengths": {**common["limit_strengths"], "max_budget_usd": "provider_enforced"}}
+    return {}
+
+
+def _validate_execution_contract(tool: str, action: str, model: str | None, permission_policy: dict[str, Any], budget_policy: dict[str, Any]) -> None:
+    capabilities = execution_capabilities_for(tool)
+    if not capabilities or action not in capabilities.get("actions", []):
+        raise ComposerError(f"action {action} is not supported by the selected adapter", "unsupported_action")
+    if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
+        raise ComposerError("model must be a non-empty string under 200 characters", "invalid_model")
+    for field in ("allowed_tools", "disallowed_tools"):
+        value = permission_policy.get(field, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+            raise ComposerError(f"{field} must be a list of non-empty strings", "invalid_permission_policy")
+        if value and not capabilities["tool_allow_deny_lists"]:
+            raise ComposerError(f"{field} cannot be guaranteed by the selected adapter", "unsupported_permission_policy")
+    if tool == "codex":
+        sandbox = permission_policy.get("sandbox", "read-only")
+        if sandbox != "read-only":
+            raise ComposerError("Codex Phase 3 only guarantees a read-only sandbox", "unsupported_permission_policy")
+        approval_policy = permission_policy.get("approval_policy", "on-request")
+        if approval_policy not in capabilities["approval_policy"]:
+            raise ComposerError("unsupported Codex approval policy", "invalid_permission_policy")
+        if budget_policy.get("max_budget_usd") is not None:
+            raise ComposerError("Codex adapter cannot hard-enforce max_budget_usd", "unsupported_budget_policy")
+    if budget_policy.get("max_turns", 1) != 1:
+        raise ComposerError("Phase 3 accepts exactly one turn per run", "single_turn_required")
+    for field in ("max_total_tokens_observed", "max_cost_minor_observed"):
+        value = budget_policy.get(field)
+        if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0):
+            raise ComposerError(f"{field} must be a non-negative number", "invalid_budget")
 
 
 def _now() -> str:
@@ -28,6 +91,40 @@ def _request_hash(payload: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+def _profile_environment_snapshot(tool: str, config_root: str) -> dict[str, Any]:
+    """Record only child-env names and a non-reversible root identity."""
+    variable = "CODEX_HOME" if tool == "codex" else "CLAUDE_CONFIG_DIR"
+    normalized_root = os.path.normcase(os.path.realpath(config_root))
+    return {
+        "variable_names": [variable],
+        "value_sha256": {variable: hashlib.sha256(normalized_root.encode("utf-8")).hexdigest()},
+    }
+
+
+def _profile_snapshot(tool: str, config_root: str, session_root: str) -> dict[str, Any]:
+    """Capture normalized profile roots and the executable resolution used by runtime."""
+    executable = resolve_codex_executable() if tool == "codex" else resolve_claude_executable()
+    executable_available = bool(executable and (os.path.isfile(executable) or shutil.which(executable)))
+    return {
+        "config_root": os.path.normcase(os.path.realpath(config_root)),
+        "session_root": os.path.normcase(os.path.realpath(session_root)),
+        "executable": executable,
+        "executable_configured": executable_available,
+    }
+
+
+def _observed_capability(conn: Any, tool: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT payload_json FROM runtime_capability_baselines ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    value = payload.get(tool)
+    return value if isinstance(value, dict) else None
+
+
 def compose_run(
     conn: Any,
     *,
@@ -35,6 +132,7 @@ def compose_run(
     tool: str,
     profile_id: str,
     cwd: str,
+    cwd_confirmed: bool = True,
     prompt: str | None = None,
     prompts: list[str] | None = None,
     model: str | None = None,
@@ -65,12 +163,33 @@ def compose_run(
     if not os.path.isdir(cwd):
         raise ComposerError("cwd does not exist", "cwd_not_found")
     normalized_cwd = os.path.normcase(os.path.realpath(cwd))
+    if not cwd_confirmed:
+        project_roots = [row[0] for row in conn.execute(
+            "SELECT cwd_canonical FROM projects WHERE exists_on_disk=1 AND cwd_canonical IS NOT NULL"
+        ).fetchall()]
+        registered = False
+        for root in project_roots:
+            normalized_root = os.path.normcase(os.path.realpath(root))
+            try:
+                if os.path.commonpath((normalized_cwd, normalized_root)) == normalized_root:
+                    registered = True
+                    break
+            except ValueError:
+                continue
+        if not registered:
+            raise ComposerError("cwd is not a registered project root; explicit confirmation is required", "cwd_confirmation_required")
 
     profile = conn.execute(
         "SELECT id,tool,config_root,session_root,enabled FROM tool_profiles WHERE id=?", (profile_id,)
     ).fetchone()
     if profile is None or profile["tool"] != tool or not profile["enabled"]:
         raise ComposerError("profile does not belong to selected tool", "invalid_profile")
+
+    observed = _observed_capability(conn, tool)
+    if observed and observed.get("status") == "missing":
+        raise ComposerError("selected CLI is not available on this device", "cli_unavailable")
+    if action == "fork" and tool == "codex" and observed and observed.get("features", {}).get("app_server") is False:
+        raise ComposerError("Codex App Server is not available for Fork", "unsupported_action")
 
     source_native_session_id: str | None = None
     if action == "new":
@@ -93,12 +212,14 @@ def compose_run(
 
     permission_policy = dict(permission_policy or {})
     budget_policy = dict(budget_policy or {})
+    _validate_execution_contract(tool, action, model, permission_policy, budget_policy)
     request_body = {
         "action": action,
         "tool": tool,
         "profile_id": profile_id,
         "session_copy_id": session_copy_id,
         "cwd": normalized_cwd,
+        "cwd_confirmed": cwd_confirmed,
         "model": model,
         "permission_policy": permission_policy,
         "budget_policy": budget_policy,
@@ -119,6 +240,8 @@ def compose_run(
     snapshot = {
         **request_body,
         "profile_root_identity": os.path.normcase(os.path.realpath(profile["config_root"])),
+        "profile": _profile_snapshot(tool, profile["config_root"], profile["session_root"]),
+        "profile_environment": _profile_environment_snapshot(tool, profile["config_root"]),
         "created_at": now,
     }
     conn.execute("BEGIN IMMEDIATE")
@@ -141,9 +264,17 @@ def compose_run(
                 run_id, tool, client_request_id, body_hash, profile_id, session_copy_id,
                 source_native_session_id, model, normalized_cwd, action, execution_path,
                 json.dumps(permission_policy, sort_keys=True), json.dumps(budget_policy, sort_keys=True),
-                "{}", "not_started", "queued", now, now, json.dumps(snapshot, sort_keys=True),
+                json.dumps(execution_capabilities_for(tool), sort_keys=True), "not_started", "queued", now, now, json.dumps(snapshot, sort_keys=True),
             ),
         )
+        if source_native_session_id:
+            lease_key = f"{tool}:{profile_id}:{source_native_session_id}"
+            generation = acquire_writer_lease(
+                conn, physical_session_key=lease_key, run_id=run_id, owner_id=f"composer:{run_id}",
+                now=now, expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                transactional=False,
+            )
+            conn.execute("UPDATE runs SET lease_generation=? WHERE id=?", (generation, run_id))
         conn.execute(
             """INSERT INTO run_steps(id,run_id,ordinal,prompt_text,state,timeout_ms)
                VALUES(?,?,?,?,?,?)""",
@@ -167,16 +298,29 @@ def request_cancel(conn: Any, run_id: str) -> dict[str, Any]:
     # coordinator owns process cleanup, while this wakes attached Run Centers.
     from app.ai_workbench.event_persistence import persist_status_change
 
-    if row["state"] == "queued":
-        persist_status_change(
-            conn, run_id=run_id, step_id=step["id"] if step else None, state="cancelled", source_tool=row["tool"],
-            reason="cancelled_before_dispatch", step_state="cancelled", run_updates={"finished_at": now},
-        )
-    elif row["state"] in {"starting", "running", "waiting_approval"}:
-        persist_status_change(
-            conn, run_id=run_id, step_id=step["id"] if step else None, state="cancel_requested", source_tool=row["tool"],
-            reason="user_requested", step_state="cancel_requested", run_updates={"cancel_requested_at": now},
-        )
+    try:
+        if row["state"] == "queued":
+            persist_status_change(
+                conn, run_id=run_id, step_id=step["id"] if step else None, state="cancelled", source_tool=row["tool"],
+                reason="cancelled_before_dispatch", step_state="cancelled", run_updates={"finished_at": now},
+            )
+            source = conn.execute("SELECT source_native_session_id,profile_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if source and source["source_native_session_id"]:
+                generation = conn.execute("SELECT lease_generation FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+                release_writer_lease(conn, physical_session_key=f"{row['tool']}:{source['profile_id']}:{source['source_native_session_id']}", run_id=run_id, lease_generation=int(generation))
+        elif row["state"] in {"starting", "running", "waiting_approval"}:
+            persist_status_change(
+                conn, run_id=run_id, step_id=step["id"] if step else None, state="cancel_requested", source_tool=row["tool"],
+                reason="user_requested", step_state="cancel_requested", run_updates={"cancel_requested_at": now},
+            )
+    except ValueError:
+        # A worker can complete in the narrow window after the API reads the
+        # state and before its durable transition commits. A terminal fact wins
+        # over cancellation; return it as an idempotent cancel response.
+        latest = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if latest and latest["state"] in {"succeeded", "failed", "cancelled", "interrupted"}:
+            return dict(latest)
+        raise
     return dict(conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
 
 

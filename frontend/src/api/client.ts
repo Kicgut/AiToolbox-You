@@ -3,8 +3,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
     let detailMessage = '';
     try {
       const body = await response.clone().json();
-      const detail = body?.detail;
-      detailMessage = typeof detail === 'string' ? detail : detail?.message || detail?.code || '';
+      const error = body?.detail ?? body;
+      detailMessage = typeof error === 'string' ? error : error?.message || error?.code || '';
     } catch {
       // Response body was not JSON (or already consumed); fall back below.
     }

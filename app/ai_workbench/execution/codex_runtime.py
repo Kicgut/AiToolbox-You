@@ -9,13 +9,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+from app.ai_workbench.execution.schema_contract import load_codex_app_server_manifest, validate_method_params
 
 
-METHODS = frozenset({"initialize", "initialized", "thread/list", "thread/read", "thread/start", "thread/resume", "thread/fork", "turn/start", "turn/interrupt", "experimentalApi"})
-APPROVAL_METHODS = frozenset({
-    "item/commandExecution/requestApproval",
-    "item/fileChange/requestApproval",
-})
+_CONTRACT = load_codex_app_server_manifest()
+METHODS = frozenset(_CONTRACT["client_methods"])
+APPROVAL_METHODS = frozenset(_CONTRACT["server_request_methods"])
 
 
 def resolve_codex_executable() -> str:
@@ -72,9 +71,35 @@ def _event(kind: str, payload: dict[str, Any], source_type: str, path: str) -> d
 
 def _map_record(record: dict[str, Any], path: str) -> dict[str, Any]:
     """Map one Codex JSON object to the unified event contract."""
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
     typ = str(record.get("type") or record.get("event") or record.get("method") or "unknown")
-    low = typ.lower()
+    low = typ.lower().replace("-", "_")
+    item = record.get("item") if isinstance(record.get("item"), dict) else params.get("item") if isinstance(params.get("item"), dict) else None
+    item_type = str(item.get("type", "")).lower().replace("_", "") if item else ""
+    # App Server notifications put the useful fields under params.  Promote
+    # them into the stable payload so the UI can render deltas/output without
+    # knowing provider-specific JSON-RPC nesting.
+    if params:
+        record = {**record, **params}
     if low in {"session_started", "thread_started", "thread.start", "session", "thread"}:
+        kind = "run.started"
+    elif low in {"item.started", "item/started"} and item_type in {"commandexecution", "commandexecutionrequest"}:
+        kind = "tool.started"
+    elif low in {"item.started", "item/started"} and item_type in {"usermessage"}:
+        kind = "user.message"
+    elif low in {"item.completed", "item/completed"} and item_type in {"agentmessage", "assistantmessage", "message"}:
+        kind = "message.completed"
+        record = {**record, "text": item.get("text") or item.get("aggregated_output", "")}
+    elif low in {"item.completed", "item/completed"} and item_type in {"usermessage"}:
+        kind = "user.message"
+    elif low in {"item.completed", "item/completed"} and item_type in {"commandexecution", "commandexecutionrequest"}:
+        kind = "tool.completed"
+        record = {**record, "output": item.get("aggregated_output", ""), "command": item.get("command")}
+    elif low in {"item/agentmessage/delta", "item.agentmessage.delta"}:
+        kind = "message.delta"
+    elif low in {"thread/started", "thread.started"}:
+        kind = "run.started"
+    elif low in {"turn/started", "turn.started"}:
         kind = "run.started"
     elif low in {"user", "user_message", "prompt"}:
         kind = "user.message"
@@ -92,12 +117,12 @@ def _map_record(record: dict[str, Any], path: str) -> dict[str, Any]:
         kind = "command.output"
     elif low in {"file_changed", "file_change", "diff"}:
         kind = "file.changed"
+    elif low in {"turn_completed", "turn.completed", "turn/completed", "completed"}:
+        kind = "run.completed"
     elif low in {"usage", "usage_snapshot", "token_usage"} or "usage" in record:
         kind = "usage.updated"
     elif low in {"error", "failed", "rejected"}:
         kind = "error"
-    elif low in {"turn_completed", "turn.completed", "completed"}:
-        kind = "run.completed"
     else:
         kind = "unknown"
     return _event(kind, record, typ, path)
@@ -115,8 +140,12 @@ class AppServerClient:
 
     def __init__(self, argv: Iterable[str] | None = None, *, handshake_timeout: float = 3.0,
                  cwd: str | None = None, env: dict[str, str] | None = None, on_process: Any | None = None,
-                 approval_handler: Any | None = None, approval_delivery_handler: Any | None = None, on_event: Any | None = None):
-        self.argv = tuple(argv) if argv is not None else (resolve_codex_executable(), "app-server")
+                 approval_handler: Any | None = None, approval_delivery_handler: Any | None = None,
+                 on_event: Any | None = None, on_cleanup: Any | None = None, on_interrupt: Any | None = None,
+                 on_turn_submitted: Any | None = None):
+        # App Server is a JSONL protocol over stdio.  Be explicit so a future
+        # Codex CLI default cannot accidentally select an interactive mode.
+        self.argv = tuple(argv) if argv is not None else (resolve_codex_executable(), "app-server", "--stdio")
         self.handshake_timeout = handshake_timeout
         self.cwd = cwd
         self.env = env
@@ -124,8 +153,13 @@ class AppServerClient:
         self.approval_handler = approval_handler
         self.approval_delivery_handler = approval_delivery_handler
         self.on_event = on_event
+        self.on_cleanup = on_cleanup
+        self.on_interrupt = on_interrupt
+        self.on_turn_submitted = on_turn_submitted
         self._next_id = 1
         self.turn_submitted = False
+        self._write_lock = threading.Lock()
+        self._ignored_response_ids: set[int] = set()
 
     def run(self, prompt: str, *, mode: str = "new", session_id: str | None = None, fork_from: str | None = None,
             model: str | None = None, approval_policy: str = "on-request") -> ExecutionResult:
@@ -136,13 +170,15 @@ class AppServerClient:
             raise AppServerFallback("app-server spawn failed") from exc
         if self.on_process:
             self.on_process(process)
+        self._process = process
         q: queue.Queue[tuple[str, str]] = queue.Queue()
         threading.Thread(target=_read_stream, args=(process.stdout, "stdout", q), daemon=True).start()
         threading.Thread(target=_read_stream, args=(process.stderr, "stderr", q), daemon=True).start()
         events: list[dict[str, Any]] = []
         self._stderr_lines: list[str] = []
+        self._pre_turn_events: list[dict[str, Any]] = []
         try:
-            response = self._request(process, {
+            initialize_message = {
                 "method": "initialize",
                 "params": {
                     "clientInfo": {
@@ -156,7 +192,9 @@ class AppServerClient:
                         "optOutNotificationMethods": [],
                     },
                 },
-            }, q, self.handshake_timeout)
+            }
+            validate_method_params("initialize", initialize_message["params"])
+            response = self._request(process, initialize_message, q, self.handshake_timeout)
             if response.get("error"):
                 code = str(response["error"].get("code", ""))
                 if "unsupported" in code.lower() or response["error"].get("data") == "unsupported_capability":
@@ -188,6 +226,9 @@ class AppServerClient:
             thread_id = result_payload.get("threadId") or result_payload.get("thread", {}).get("id")
             if not thread_id:
                 raise BusinessError("thread response did not include a thread id")
+            for event in self._pre_turn_events:
+                self._emit(events, event)
+            self._pre_turn_events = []
             self._emit(events, _event("run.started", {"thread_id": thread_id, "session_id": thread_id}, "thread", "codex_app_server"))
             self.turn_submitted = True
             turn_params: dict[str, Any] = {
@@ -198,30 +239,58 @@ class AppServerClient:
             }
             if model:
                 turn_params["model"] = model
-            self._request(process, {
+            turn_response = self._request(process, {
                 "method": "turn/start",
                 "params": turn_params,
             }, q, self.handshake_timeout)
+            if turn_response.get("error"):
+                raise BusinessError(str(turn_response["error"]))
+            turn = turn_response.get("result", {}).get("turn") or {}
+            turn_id = turn.get("id") or turn.get("turnId")
+            if not isinstance(turn_id, str) or not turn_id:
+                raise BusinessError("turn response did not include a turn id")
+            if self.on_turn_submitted:
+                self.on_turn_submitted(thread_id, turn_id)
+            self._thread_id = thread_id
+            self._turn_id = turn_id
+            if self.on_interrupt:
+                self.on_interrupt(self.request_interrupt)
             for notification in getattr(self, "_pending_notifications", []):
                 self._emit(events, _map_record(notification, "codex_app_server"))
             self._pending_notifications = []
             self._collect(process, q, events)
             return ExecutionResult(events, stderr="".join(x[1] for x in self._stderr_lines))
         except AppServerFallback:
-            process.kill(); process.wait(); raise
+            self._cleanup_process(process); raise
         except BusinessError:
-            process.kill(); process.wait(); raise
+            self._cleanup_process(process); raise
         except TimeoutError as exc:
-            process.kill(); process.wait()
+            self._cleanup_process(process)
             if self.turn_submitted: raise BusinessError("turn submitted; execution interrupted") from exc
             raise AppServerFallback("handshake timeout") from exc
 
     def _send(self, process: Any, message: dict[str, Any]) -> int | None:
         """Write one JSONL protocol message, assigning ids only to requests."""
-        if "id" not in message and message["method"] != "initialized":
-            message["id"] = self._next_id; self._next_id += 1
-        process.stdin.write(json.dumps(message) + "\n"); process.stdin.flush()
-        return message.get("id")
+        with self._write_lock:
+            if "id" not in message and message["method"] != "initialized":
+                message["id"] = self._next_id; self._next_id += 1
+            process.stdin.write(json.dumps(message) + "\n"); process.stdin.flush()
+            return message.get("id")
+
+    def request_interrupt(self) -> bool:
+        """Ask the current App Server turn to stop without closing its stdio."""
+        process = getattr(self, "_process", None)
+        thread_id = getattr(self, "_thread_id", None)
+        turn_id = getattr(self, "_turn_id", None)
+        if process is None or not thread_id or not turn_id or process.poll() is not None:
+            return False
+        try:
+            request_id = self._send(process, {"method": "turn/interrupt", "params": {"threadId": thread_id, "turnId": turn_id}})
+            if request_id is not None:
+                self._ignored_response_ids.add(request_id)
+            return True
+        except (BrokenPipeError, OSError, ValueError):
+            return False
 
     def _notify(self, process: Any, method: str, params: dict[str, Any] | None = None) -> None:
         if method not in METHODS: raise ValueError(method)
@@ -237,42 +306,79 @@ class AppServerClient:
         while time.monotonic() < deadline:
             try: label, line = q.get(timeout=max(0.01, deadline - time.monotonic()))
             except queue.Empty: break
-            if label == "stderr": self._stderr_lines = getattr(self, "_stderr_lines", []) + ([line] if line else []); continue
+            if label == "stderr":
+                self._stderr_lines = getattr(self, "_stderr_lines", []) + ([line] if line else [])
+                if line:
+                    self._pre_turn_events.append(_event("diagnostic.stderr", {"raw": line.rstrip("\r\n")}, "stderr", "codex_app_server"))
+                continue
             if not line: continue
             try: item = json.loads(line)
-            except json.JSONDecodeError: continue
+            except json.JSONDecodeError:
+                self._pre_turn_events.append(_event("unknown", {"raw": line.rstrip("\r\n")}, "non_json", "codex_app_server"))
+                continue
             if item.get("id") == wanted: return item
-            if "method" in item: self._pending_notifications.append(item) if hasattr(self, "_pending_notifications") else setattr(self, "_pending_notifications", [item])
+            if "method" in item:
+                if item.get("id") is not None and item.get("method") not in APPROVAL_METHODS:
+                    self._respond_unsupported_request(process, item)
+                    self._pre_turn_events.append(_event("error", {"code": "unsupported_server_request", "method": item.get("method")}, str(item.get("method")), "codex_app_server"))
+                else:
+                    self._pending_notifications.append(item) if hasattr(self, "_pending_notifications") else setattr(self, "_pending_notifications", [item])
+            else:
+                self._pre_turn_events.append(_event("unknown", {"raw": item}, "unmatched_response", "codex_app_server"))
         raise TimeoutError("protocol response timeout")
 
     def _collect(self, process: Any, q: queue.Queue, events: list[dict[str, Any]]) -> None:
         """Drain child output and retain malformed or unknown records as raw events."""
-        while process.poll() is None or not q.empty():
+        closed: set[str] = set()
+        terminal_deadline: float | None = None
+        while (terminal_deadline is None and (process.poll() is None or not q.empty() or len(closed) < 2)) or (terminal_deadline is not None and time.monotonic() < terminal_deadline and (not q.empty() or len(closed) < 2)):
             try: label, line = q.get(timeout=0.1)
             except queue.Empty: continue
-            if not line: continue
+            if not line:
+                closed.add(label)
+                continue
             if label == "stderr": self._emit(events, _event("diagnostic.stderr", {"raw": line.rstrip("\r\n")}, "stderr", "codex_app_server")); continue
             try: item = json.loads(line)
             except json.JSONDecodeError: self._emit(events, _event("unknown", {"raw": line.rstrip("\r\n")}, "non_json", "codex_app_server")); continue
+            if item.get("id") in self._ignored_response_ids:
+                self._ignored_response_ids.discard(item["id"])
+                continue
             if item.get("id") is not None and item.get("method") in APPROVAL_METHODS:
                 self._respond_to_approval(process, item, events)
                 continue
-            self._emit(events, _map_record(item, "codex_app_server"))
+            if item.get("id") is not None and item.get("method"):
+                self._respond_unsupported_request(process, item)
+                self._emit(events, _event("error", {"code": "unsupported_server_request", "method": item.get("method")}, str(item.get("method")), "codex_app_server"))
+                continue
+            mapped = _map_record(item, "codex_app_server")
+            self._emit(events, mapped)
             # App Server is a long-lived JSON-RPC process, but Workbench owns
             # exactly one turn per run.  Once that turn reaches a terminal
             # protocol status, close the session so the coordinator can record
             # the run terminal state instead of waiting forever.
-            if item.get("method") == "turn/completed":
+            if mapped["event_type"] == "run.completed":
                 self._close_after_turn(process)
-                break
+                # A terminal notification can be followed by buffered stderr
+                # or malformed records from the same child.  Keep draining the
+                # reader queues briefly so those audit events are not lost. A
+                # provider process that keeps its server alive must not hold a
+                # completed Workbench run open until the hard run timeout.
+                terminal_deadline = time.monotonic() + 1.0
+                continue
 
-    @staticmethod
-    def _close_after_turn(process: Any) -> None:
+    def _close_after_turn(self, process: Any) -> None:
         try:
             if process.stdin and not process.stdin.closed:
                 process.stdin.close()
         except (BrokenPipeError, OSError, ValueError):
             pass
+        self._cleanup_process(process)
+
+    def _cleanup_process(self, process: Any) -> None:
+        """Delegate live-run cleanup to the coordinator when one owns it."""
+        if self.on_cleanup is not None:
+            self.on_cleanup(process)
+            return
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -287,6 +393,11 @@ class AppServerClient:
         session.  Unsupported server requests are explicitly declined rather
         than represented as a fake actionable approval in the UI.
         """
+        self._emit(events, _event(
+            "approval.requested",
+            {"native_request_id": str(request.get("id")), "method": request.get("method"), "params": request.get("params") or {}},
+            str(request.get("method") or "approval/request"), "codex_app_server",
+        ))
         if self.approval_handler is None:
             result: dict[str, Any] = {"decision": "decline"}
         else:
@@ -301,6 +412,13 @@ class AppServerClient:
             if self.approval_delivery_handler:
                 self.approval_delivery_handler(str(request["id"]), str(result.get("decision") or "decline"), False)
             self._emit(events, _event("error", {"code": "approval_delivery_failed", "native_request_id": str(request["id"])}, request["method"], "codex_app_server"))
+
+    def _respond_unsupported_request(self, process: Any, request: dict[str, Any]) -> None:
+        """Complete the JSON-RPC exchange without inventing a UI capability."""
+        try:
+            self._send(process, {"id": request["id"], "error": {"code": "unsupported_method", "message": "server request is not supported by this Workbench version"}})
+        except (BrokenPipeError, OSError, ValueError):
+            pass
 
     def _emit(self, events: list[dict[str, Any]], event: dict[str, Any]) -> None:
         events.append(event)
