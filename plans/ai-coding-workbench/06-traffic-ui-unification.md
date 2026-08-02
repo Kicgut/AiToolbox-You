@@ -1,42 +1,51 @@
-# UI-06：代理流量前端统一
+# UI-06：代理流量辅助视图接入新导航
 
-> 状态：已完成
-> 用户授权：2026-07-31，“能统一就统一，现在只是产品开发阶段还没上线，有必要的化完全修改代理流量的前端代码也可以”
-> 依赖：现有 Workbench SPA、代理流量 API 与 WebSocket 均已可用
-> 范围：仅统一 `/traffic` 的前端入口、路由、布局与视觉组件；不变更采集器、SQLite 模型、Clash/Mihomo 连接方式或接口数据合同
+> 状态：待审查（原 UI 接入历史完成，需按新信息架构复核）
+> 更新时间：2026-08-01-23-40-00
+> 依赖：新全局导航与总览布局的 UI 基础；`features/proxy-traffic-monitor/` 保持独立模块
+> 不包含：Token、模型、成本、账户余额、订阅额度、CC Switch 数据或会话原始内容。
 
 ## 目标
 
-让 `/traffic` 成为 Workbench SPA 的一个正式路由，复用同一 `AppShell`、左侧导航、主题令牌、状态语义和响应式行为；代理流量后端仍作为 `features/proxy-traffic-monitor` 的独立挂载模块运行。
+保留并完善 `features/proxy-traffic-monitor/` 的 Clash/Mihomo 网络流量辅助功能，将其放在一级导航分割线以下的“代理流量”。它记录网络字节、连接、域名和代理服务状态；不会承担模型用量统计、会话请求追踪或 CC Switch 展示。
 
-## 任务
+## 现状证据
 
-- [x] UI6-01：将架构、功能文档与 SPA 路由边界更新为“视觉和代码统一、后端功能边界独立”。
-- [x] UI6-02：移除代理流量模块对 `/traffic` 静态 HTML 的占用，使 FastAPI history fallback 可交给 Workbench SPA；保留 `/api/*`、`/ws/live`、collector 与 lifespan。
-- [x] UI6-03：建立全局左侧导航和统一令牌；主 SPA 与 `/traffic` 使用相同的页面外壳。
-- [x] UI6-04：实现 `TrafficView`，覆盖连接状态、KPI、小时/天/周趋势、应用/主机/链路/连接排行、实时连接、方向筛选与导出。
-- [x] UI6-05：以稳定 DTO 和现有 API 实现请求、加载、空数据、断线/重连、已断开连接与错误状态；不得读取或展示 Clash API 密钥。
-- [x] UI6-06：为 `/traffic` history fallback、已存在流量 API、WebSocket 降级行为和前端构建补充或运行验证。
+- 原计划的前端统一工作已有历史完成记录，但当时的总览/导航仍包含独立会话中心、运行中心和旧占位关系。
+- 现有辅助模块路径为 `features/proxy-traffic-monitor/`，按仓库规则不应并入 `app/ai_workbench`。
 
-## 非目标
+## 过时项（停止维护 / 删除目标）
 
-- 不迁移、重写或升级 Clash/Mihomo、Collector、数据库、第三方配置或凭据。
-- 不把流量数据放入 Workbench 会话/运行统计模型。
-- 不实现云同步、账户体系、远程多用户或自动化任务。
-- 不更改任何 Codex/Claude 真实执行门禁。
+- [ ] 删除把代理流量解读为 Token、模型请求数、模型成本、余额或订阅配额的任何说明、API 字段和 UI 文案。
+- [ ] 删除旧导航中“返回总览”充当主要信息架构的交互；新全局导航应直接可达。
+- [ ] 删除任何通过 CC Switch、Codex、Claude transcript 或 Workbench usage 表推断 Clash 流量的实现设想。
 
-## 验收
+## 清理清单
 
-- `/traffic` 在浏览器 history 访问与直接刷新时均由 Workbench SPA 渲染，侧栏中“代理流量”可见且激活。
-- 现有 `/api/status`、`/api/timeseries`、`/api/top`、`/api/export` 与 `/ws/live` 保持合同兼容。
-- 已连接、重连、数据为空、数据请求失败、未知进程及已断开连接均有独立且可访问的视觉状态。
-- 前端构建、Python 全量测试和代理流量定向测试通过；不产生第三方文件写入。
+- [ ] 审查 `features/proxy-traffic-monitor/`、挂载层、前端路由和静态资产，删除与旧 RunCenter/旧总览卡片耦合的链接、文案或未使用入口。
+- [ ] 审查持久化字段与网络采集器，只保留网络流量功能实际需要的数据；不得因新用量页而添加模型/账户敏感信息。
+- [ ] 删除/更新过时的浏览器截图断言和旧导航 E2E，使测试验证新辅助区位置而非旧页面顺序。
+
+## 修改清单
+
+- [ ] 保持特性模块独立，通过明确的 `mount()`/`lifespan()` 集成；不将采集器、SQLite 或网络 API 混入 Workbench 核心存储。
+- [ ] 按新全局导航调整入口顺序：总览、会话、自动任务、用量统计，分割线后为代理流量、设置；总览仍是默认页。
+- [ ] 从用量统计页提供可解释跳转：“查看网络代理流量”，并说明其与 Token/余额无关。
+- [ ] 将代理服务不可用、权限不足、无数据和采集延迟以独立状态展示，不能影响会话、用量或自动任务的可用性。
+
+## 新增任务
+
+- [ ] 更新路由、侧栏活跃态、键盘导航和窄屏导航，使代理流量作为辅助一级项正确出现。
+- [ ] 调整代理流量页面标题、来源说明、空态和链接，明确数据来自 Clash/Mihomo 网络观测。
+- [ ] 增加模块边界测试：核心 Workbench 启动时可在采集器缺失/失败时降级；流量模块不能读写 Workbench 会话索引、原生 JSONL、Token/余额连接器或 CC Switch。
+- [ ] 增加浏览器验证：从总览/用量跳转、返回导航、无服务空态和窄屏可访问性。
+
+## 退出标准
+
+- [ ] 用户不会把代理流量误认为模型 Token 或账户金额，页面、API 与总览没有混合指标。
+- [ ] 功能在新导航中位置正确，仍是可选辅助模块，核心 Workbench 不依赖其运行。
+- [ ] 所有旧 UI/测试耦合已清理，功能模块边界保持清晰。
 
 ## 执行证据
 
-- `npm run build`：通过，产物已写入 `app/static/workbench/`。
-- `.venv\\Scripts\\python.exe -m pytest features/proxy-traffic-monitor/tests tests/test_routing.py -q`：16 通过。
-- 全量 pytest：受限环境外运行后 168 通过、1 失败；失败为既有 `test_submitted_turn_failure_does_not_silently_fallback` 的 50ms App Server 握手时序，不涉及流量路由、API 或页面。
-- 浏览器检查：直接访问 `/traffic` 成功渲染 Workbench 壳；侧栏激活、排行维度切换、代理方向筛选、导出 URL 上下文和无数据解释状态均已验证。
-- 边界检查：未读取或写入 Clash/Mihomo 凭据、CC Switch、Codex 或 Claude 配置；仅新建项目根 `.venv` 与 `.artifacts/tmp/` 测试临时文件。
-- 回滚：恢复本计划关联提交即可将 `/traffic` 返回到原独立静态入口；后端采集器、SQLite 和 API 数据不受本次变更影响。
+保留历史完成证据仅供追溯；重基线后的导航/边界复核完成后，在此记录当前测试与浏览器验证结果。

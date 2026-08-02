@@ -1,71 +1,51 @@
 # AI 编程工作台分阶段计划
 
-## 使用方式
+> 状态：架构重基线后待逐阶段审查
+> 更新时间：2026-08-01-22-45-00
+> 架构依据：[架构](../../docs/ai-coding-workbench-architecture.md)、[会话工作区决策](../../docs/conversation-workspace-rethink.md)、[术语](../../CONTEXT.md)
+> 实施规则：只有用户明确批准某一 Phase 后，才可以实现该 Phase；计划更新不构成代码实施授权。
 
-这些文件把 `docs/ai-coding-workbench-architecture.md` 拆成可逐阶段审查、批准、实施和验收的任务。任何 Phase 都不会因为前一阶段完成而自动开始。
+## 计划目的
 
-实施或审核任何任务前，先读 `docs/verification-and-boundaries.md`：它是规则的验证层（不是规则正文），提供每条边界规则对应的自动化测试设计和人工/AI 自查清单，以及第 6 节的任务自审模板。
+本目录把已确认的目标架构拆成可审查、可验收的实施阶段。Workbench 的目标是整合原生 Codex / Claude，而不是再建一份完整 transcript、事件仓或模型服务：原生 JSONL 是正文事实源；Workbench 只保存轻量索引、用户组织数据、自动任务与最小受控运行审计。
 
-状态值：
+旧计划中已经完成的试验、测试和实现记录仍可作为历史证据，但不能被理解为目标架构已完成。每个 Phase 都明确列出：
 
-- `待审查`：方案已写，等待用户逐项审查。
-- `修订中`：根据审查意见更新，禁止实施。
-- `已批准`：用户明确批准，可以实施。
-- `实施中`：正在执行该 Phase，必须持续记录证据。
-- `待验收`：实现和内部验证完成，等待用户验收。
-- `已完成`：用户确认通过。
-- `阻塞`：存在无法在当前授权或条件下解决的问题。
+- **过时项**：不再实施、后续迁移时删除或停止维护的旧方向；
+- **清理清单**：需要从现有代码、数据模型、路由或前端移除的内容；
+- **修改清单**：可保留但必须改成新边界的能力；
+- **新增任务**：目标架构仍缺失、必须新建的能力。
 
-## 阶段顺序
+除已有历史证据外，重基线产生的任务一律从 `[ ]` 开始。完成后须填入同一 Phase 的“执行证据”，并按 [通用验证边界](../../docs/verification-and-boundaries.md) 验证。
 
-| Phase | 文件 | 目标 | 当前状态 | 进入条件 |
-|---:|---|---|---|---|
-| 0 | `00-technical-foundation.md` | 技术 Spike、协议和兼容基线 | 已完成 | 架构讨论稿可用 |
-| 1 | `01-read-only-session-center.md` | 只读统一会话中心 | 已完成 | Phase 0 已完成 |
-| 2 | `02-statistics-center.md` | 自有统计与 CC Switch 可选增强 | 已完成 | Phase 1 已完成（含 P1-13 前端基础整理门禁） |
-| 3 | `03-interactive-runtime.md` | 新建/续接/Fork 与实时输出 | 实施中 | Phase 2 已完成 |
-| 4 | `04-automation-scheduler.md` | 多 Step 定时任务和恢复 | 待审查 | Phase 3 已完成 |
-| 5 | `05-cross-profile-migration.md` | 跨 profile 复制、分叉与回滚 | 待审查 | Phase 1、3、4 已稳定 |
-| UI-06 | `06-traffic-ui-unification.md` | 将代理流量前端统一进 Workbench SPA，后端功能边界保持独立 | 已完成 | 用户已明确授权；不依赖 Phase 4、5 |
+## 推荐实施顺序
 
-## 审查流程
+| 顺序 | Phase | 目标 | 当前状态 |
+| --- | --- | --- | --- |
+| 0 | [00-technical-foundation.md](00-technical-foundation.md) | 固化新数据边界、迁移前审计与 fixture 基线 | 待审查 |
+| 1 | [01-read-only-session-center.md](01-read-only-session-center.md) | 轻量索引、原生按需读取、三栏会话工作区 | 待审查；后续实现的第一依赖 |
+| 2 | [02-statistics-center.md](02-statistics-center.md) | 原生按需 Token 统计、额度/余额与可选 CC Switch 卡片 | 待审查；依赖 Phase 1 来源读取 |
+| 3 | [03-interactive-runtime.md](03-interactive-runtime.md) | 会话内 New / Resume / Handoff 与最小运行审计 | 待审查；依赖 Phase 1 |
+| 4 | [04-automation-scheduler.md](04-automation-scheduler.md) | 任务定义、调度与会话内结果入口 | 待审查；依赖 Phase 3 |
+| 5 | [05-cross-profile-migration.md](05-cross-profile-migration.md) | 显式迁移、来源副本与分叉处理 | 待审查；依赖 Phase 1、3、4 |
+| 6 | [06-traffic-ui-unification.md](06-traffic-ui-unification.md) | 保持 Clash/Mihomo 网络流量辅助视图并接入新导航 | 待审查；可与核心 Phase 并行评审 |
+| 7 | [07-visual-design-implementation.md](07-visual-design-implementation.md) | 以已确认视觉规范统一总览、会话、任务、用量和设置 | 待审查；随各功能 Phase 逐步落地 |
 
-1. 只审查当前准备进入的 Phase。
-2. 确认目标、非目标、任务、数据变更、测试矩阵、风险和退出标准。
-3. 将修改意见写入该 Phase 的“审查记录”。
-4. 用户明确说“批准 Phase N”后，才把状态改为 `已批准`。
-5. 实施期间逐项勾选任务，对照 `docs/verification-and-boundaries.md` 对应章节选择适用的自动化测试和人工检查，并把命令、测试结果、截图、数据对比和第 6 节自审模板填写结果写入“执行证据”。
-6. 达到退出标准后改为 `待验收` 并停止。
-7. 用户验收后改为 `已完成`，再审查下一 Phase。
+Phase 0–7 不是自动流水线。每一阶段结束后必须：核对该文件的退出标准、记录验证证据、更新 `docs/phase-execution-lessons.md`，并请用户确认是否进入下一阶段。
 
-## 通用硬性约束
+## 全局不可违背的约束
 
-- Cockpit Tools 和 CC Switch 始终是可选集成。
-- 只读探测外部软件版本；本项目不升级、降级、重装或修复 Cockpit Tools、CC Switch、Codex CLI、Claude Code。需要升级时先沟通，并建议用户从软件自身界面执行完整更新。
-- Phase 0–4 默认不修改第三方账号、配置或原生会话历史；Phase 5 才讨论明确写入。
-- 未经单独批准，不发送真实模型请求。
-- 不用危险权限绕过作为测试捷径。
-- 每个外部 schema 都需要 fixture；未知事件必须可降级。
-- 每个指标必须携带来源和数据质量。
-- 发布产物不要求部署服务器安装 Node.js。
+- [ ] 不把完整 native transcript、每条 raw event、常驻全文 FTS 或会话副本重新写入 Workbench 数据库。
+- [ ] 不把“运行中心”或“运维”恢复为一级页面；运行入口与诊断按架构分散到会话、总览、任务、用量和设置。
+- [ ] 不读取、展示、调用或写入 Cockpit Tools 的账号、多实例、配额、同步、日志、API 或凭据；移除 Workbench 的 Cockpit 专用目录发现路径。
+- [ ] 不依赖 CC Switch；若存在稳定、非敏感只读契约，仅作为用量统计内的可选独立卡片。
+- [ ] 不写入 Codex / Claude 原生会话文件，除非已批准的显式迁移任务逐文件列明目标、预检、用户确认与结果报告。
+- [ ] 不把代理流量的网络字节/连接指标与模型 Token、余额或订阅额度混合。
+- [ ] 删除旧重型投影前，向用户展示精确对象、预计释放空间与保留的轻量数据；删除后报告实际释放空间，不保留兼容读取或同等大小备份。
 
-## 全局完成定义
+## 计划维护规则
 
-一个 Phase 只有同时满足以下条件才能进入 `待验收`：
-
-- 计划内交付物齐全。
-- 自动化测试通过。
-- 手工验收场景完成。
-- 没有未说明的第三方文件写入。
-- 文档（架构决策表、`CONTEXT.md` 术语）和接口契约已同步。
-- 已记录已知限制和回滚方式。
-
-## 计划变更规则
-
-- 架构改变时，先更新架构文档，再更新受影响 Phase。
-- 不把后续 Phase 的功能偷偷并入当前 Phase。
-- 新增阶段时更新本索引、依赖关系和 `docs/ai-coding-workbench-architecture.md`；涉及新术语时同步更新 `CONTEXT.md`。
-- 任务编号一旦用于执行证据，不复用给不同含义的任务。
-# Artifact hygiene
-
-All phase implementation and verification follows `docs/artifact-hygiene.md`. Disposable test output belongs under `.artifacts/tmp/`; short-lived verification evidence belongs under `.artifacts/verification/`. Phase plans must not introduce new root-level temporary directories or databases.
+- 计划以当前代码和 `tests/ai_workbench/` 的实际结构为证据；测试文件名、命令和结果只写入对应 Phase，不写入通用验证文档。
+- 一个已完成的旧任务若与新架构冲突，应移至“过时项/清理清单”，而不是继续打勾作为交付完成。
+- 每个新任务必须写成可验证的 `[ ]` 条目；只有实施、测试和证据同时存在后才改为 `[x]`。
+- 外部工具协议、schema、供应商 API 等易变事实在实施前重新调研；不要用旧计划中的版本号作为当期事实。

@@ -1,151 +1,72 @@
-# Phase 0：技术基础与兼容性 Spike
+# Phase 0：轻量索引迁移前技术基线
 
-> 状态：已完成  
-> 依赖：`docs/ai-coding-workbench-architecture.md`  
-> 允许真实模型请求：否  
-> 允许修改第三方数据：否  
-> 验证映射：`docs/verification-and-boundaries.md` §3.1（流程/Git/外部软件）、§3.4 EVT-02/EVT-05（事件降级与 fixture）、§3.5 RUN-01/02（进程执行）
+> 状态：待审查
+> 更新时间：2026-08-01-22-45-00
+> 依赖：无；本阶段通过后才能批准 Phase 1 的数据迁移实现
+> 不包含：真实模型请求、原生会话写入、完整会话导入、Cockpit 或 CC Switch 写入。
 
 ## 目标
 
-用无费用、可重复的实验确定实现边界，建立工具能力探测、原生会话 fixture、统一事件契约和进程监管原型。Phase 0 不交付用户功能页面。
+建立从现有重型投影实现迁移到“原生来源优先 + 轻量常驻索引 + 按需读取”的安全基线。Phase 0 只产生审计、fixture、数据契约和删除计划；不改写用户数据，也不删除旧数据库。
 
-## 非目标
+## 现状证据
 
-- 不创建或续接真实模型 Turn。
-- 不升级、降级、重装或修复 CC Switch、Cockpit Tools、Codex CLI、Claude Code 等外部软件。
-- 不修改 Codex、Claude、Cockpit Tools 或 CC Switch 数据。
-- 不实现正式数据库和完整前端。
-- 不决定跨 profile 写入算法。
+- 已有能力：`adapters/capabilities.py`、`events/normalizer.py`、`execution/supervisor.py` 和 `tests/ai_workbench/phase0/` 已为 Codex / Claude 的能力、事件容错和进程监管提供历史试验基础。
+- 已有实现边界冲突：`storage.py`、`event_persistence.py`、`statistics.py` 等仍以完整事件/观测/统计表为常驻数据模型；不能直接作为 Phase 1 的存储设计沿用。
 
-## 预期代码位置
+## 过时项（停止维护 / 后续删除）
 
-本阶段先通过 ADR 确认。建议后端落在：
+- [ ] 废止“以完整事件契约 v1 作为长期 Workbench transcript 存储格式”的计划；事件规范化仅服务运行时和按需展示。
+- [ ] 废止为 CC Switch 内部 schema、数据库版本或本机缓存建立兼容层的目标；它不是核心依赖或数据所有者。
+- [ ] 废止以 Cockpit profile whitelist 发现目录的前提；额外来源目录统一改为 Workbench 通用手动登记。
+- [ ] 废止“运行中心”作为进程管理产品模块的命名；保留必要的进程监管代码，供会话内动作和自动任务使用。
 
-```text
-proxy-traffic-monitor/app/ai_workbench/
-├── adapters/
-├── events/
-├── indexing/
-├── execution/
-└── compatibility/
-```
+## 清理清单（在后续 Phase 实施前后完成）
 
-如果确认该模块未来应脱离 `proxy-traffic-monitor`，本 Phase 只调整 ADR 和计划，不同时搬迁现有流量监控代码。
+- [ ] 建立旧表、旧 API、旧前端 state、旧测试的完整清单，至少覆盖 `session_events`、原始 payload、会话副本、FTS、旧 observations/usage 重投影，以及 Cockpit 专用白名单路径。
+- [ ] 为每个旧对象注明：删除阶段、保留/导出字段、预计磁盘占用、依赖代码、测试影响和不可逆删除条件。
+- [ ] 确认 `data/` 中现有数据库、WAL/SHM、临时 artifact 均被 Git 忽略；不把任一真实会话、凭据、schema dump 或诊断日志纳入版本库。
+- [ ] 设计一次性删除报告格式：删除前对象/预计释放空间/保留字段，删除后实际释放空间/失败项/来源健康状态。
 
-## 任务
+## 修改清单（保留能力，收窄接口）
 
-### P0-01：记录环境与目录 ADR
+- [ ] 将 `events/normalizer.py` 的通用事件模型标记为短生命周期运行/读取模型，不允许新增代码把其完整 raw payload 写入长期库。
+- [ ] 将能力发现改成“适配器能力快照”，只保存工具版本、受支持动作和非敏感协议特征；不保存外部账户或本机私密配置。
+- [ ] 为 `execution/supervisor.py` 固化跨 Phase 接口：argv、stdin/protocol 输入、超时、取消、进程树清理与结构化结果；不暴露独立 RunCenter 概念。
+- [ ] 将 fixture 规则更新为两类：脱敏原生 JSONL 读取 fixture，以及无害 fake runtime 流；每条未知记录必须可降级而不破坏整个会话。
 
-- [x] 确认后端模块、测试、fixture 和未来前端目录。
-- [x] 明确 Windows 首发还是 Windows/Linux 同步支持。
-- [x] 明确自有数据目录的 `platformdirs` 规则。
-- [x] 记录现有 workspace 非 Git 根目录这一事实。
+## 新增任务
 
-交付：`docs/adr/0001-ai-workbench-placement.md`。
+### P0-01：现有数据与依赖审计
 
-### P0-02：工具能力探测
+- [ ] 以实际 `storage.py` DDL、查询调用点、前端 API 调用和数据库样本统计为证据，形成“保留 / 转换 / 删除”矩阵。
+- [ ] 量化数据库与原生 Codex / Claude transcript 的文件数和字节数，但输出仅聚合数字，不打印会话正文、路径中的用户名或凭据。
+- [ ] 核验当前 SQLite 启动迁移可以在缺失新表时安全升级；此前 `runtime_capability_baselines` 缺表故障必须纳入迁移测试基线。
 
-- [x] 定义 `ToolCapabilities` 数据结构。
-- [x] 探测 Codex/Claude 可执行文件、版本和 help 能力，不依赖本地语言输出。
-- [x] Codex 探测 App Server、`exec --json`、resume。
-- [x] Claude 探测 `stream-json`、resume、fork、input stream。
-- [x] 缺失工具时返回可解释状态，不使服务启动失败。
+### P0-02：轻量索引最小契约
 
-测试矩阵：两者存在、只存在一个、都不存在、命令超时、help 输出变化。
+- [ ] 确认轻量索引字段：工具、原生会话 ID、一个或多个来源、路径指纹、大小/mtime/offset、标题、最近摘要、最后活动、项目、来源状态、主分组/收件箱位置。
+- [ ] 明确允许的最小受控运行审计字段，与 transcript、raw event、长输出分离。
+- [ ] 为“相同工具 + 原生会话 ID + 多来源副本”确定稳定 identity、最近完整来源选择和分叉标识契约。
 
-### P0-03：脱敏 fixture 集
+### P0-03：原生读取与删除前 fixture 基线
 
-- [x] 从 Codex 和 Claude 本机会话中选择覆盖主要事件形态的最小样本。
-- [x] 复制到测试 fixture 前移除 prompt 私密内容、绝对用户名、token、URL 凭据和仓库私密信息。
-- [x] 加入截断尾行、未知事件、工具结果、文件变化和 usage 样本。
-- [x] 记录 fixture 来源 CLI 版本和脱敏方法。
+- [ ] 增加 Codex、Claude、截断 JSONL、未知事件、同 ID 多来源、来源缺失、文件追加及旋转的脱敏 fixture。
+- [ ] 为全文搜索制定按需解析的性能/隐私边界：不得创建常驻全文库，搜索结果仅短暂返回必要 snippet。
+- [ ] 为删除前扫描创建 dry-run 测试：不删除任何文件，能准确报告被旧投影占用的数据类别。
 
-禁止把真实完整 transcript 提交为 fixture。
+### P0-04：批准门与证据
 
-### P0-04：统一事件契约 v1
+- [ ] 在本文件记录审计结果、字段矩阵、fixture 覆盖和删除候选数量。
+- [ ] 请用户审查并明确批准 Phase 1 的“重建轻量索引且暂不删除旧库”实施窗口。
 
-- [x] 定义 event envelope、sequence、source provenance 和 data quality。
-- [x] 定义 user/assistant/tool/command/file/usage/error/unknown 事件。
-- [x] 规定 raw event 的保留和脱敏边界。
-- [x] 生成 golden normalized events。
+## 验证与退出标准
 
-验收重点：前端和统计层不需要认识 Codex/Claude 原始 schema。
-
-### P0-05：App Server 无费用验证
-
-- [x] `initialize → initialized → thread/list(limit=1)` 已验证。
-- [x] 验证 `thread/read(includeTurns=false)`，只读取一个已存在会话。
-- [x] 验证客户端正常关闭、异常退出和超时。
-- [x] 保存当前版本生成的 JSON Schema 到测试临时目录，确认版本绑定方式。
-- [x] 记录稳定 API 与 experimental API 的使用清单。
-
-不得调用 `thread/start` 或 `turn/start`。
-
-### P0-06：Claude stream-json 模拟验证
-
-- [x] 用 fake process 输出 assistant、tool、result 和 error JSONL。
-- [x] 验证 stdout 增量解析与 stderr 分离。
-- [x] 验证半行、无效 JSON、超长行和进程提前退出。
-- [x] 研究但不执行真实 prompt 的 argv/stdin 组合。
-
-### P0-07：CC Switch schema 兼容探测
-
-- [x] 保存 v10 schema 元数据 fixture，不复制用户统计明细。
-- [x] 从当前源码生成 schema 能力清单。
-- [x] 实现只读 `sqlite_master/table_info/user_version` 探测原型。
-- [x] 验证数据库不存在、损坏和旧列缺失。
-- [x] 确认连接器从不打开写事务或改变 PRAGMA。
-
-### P0-08：进程监管原型
-
-- [x] 用 fake CLI 验证 spawn argv、stdin、stdout、stderr 和超时。
-- [x] Windows process group 与 Job Object 方案保留为 Phase 3 正式运行中心硬化项。
-- [x] 定义退出状态、interrupted 和 orphan cleanup 的原型边界。
-- [x] 验证有限内存缓冲。
-
-### P0-09：Spike 决策归档
-
-- [x] 将验证事实更新到架构文档（2026-07-23 起，长期上下文改为分流治理，不再有单独的 project context 文件，见架构文档 §19 2026-07-23 决策）。
-- [x] 更新 Phase 1–4 的接口假设。
-- [x] 记录未解决问题和放弃的方案。
-
-## 自动化验证
-
-```powershell
-python -m pytest tests/ai_workbench/phase0 -q
-python C:\Users\YOU2\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\ai-coding-workbench
-```
-
-实际路径已由 P0-01 确认为 `proxy-traffic-monitor/tests/ai_workbench/phase0`。
-
-## 退出标准
-
-- 两个工具的能力探测在缺失和版本差异下均可解释。
-- App Server read-only 握手和读取通过，无模型调用。
-- 统一事件契约和 golden fixtures 通过测试。
-- CC Switch v10/v16 能力探测不会写数据库。
-- fake CLI 的取消、超时、stderr 和异常 JSON 均有确定结果。
-- Phase 1 可以基于已验证接口实施，不依赖 Cockpit Tools/CC Switch。
-
-## 风险与回滚
-
-- 风险：fixture 泄露隐私。措施：人工复核、模式扫描、只保留最小结构。
-- 风险：把实验 App Server API 固化。措施：只列白名单稳定方法并保留 exec fallback。
-- 回滚：Phase 0 只新增隔离原型、fixture 和文档，不迁移用户数据；删除原型不会影响现有功能。
-
-## 审查记录
-
-- 暂无。
+- [ ] 所有 Phase 0 测试仅使用 fixture、临时数据库或只读聚合检查；没有外部软件、原生会话或账户文件被修改。
+- [ ] 审计矩阵能逐项追溯现有重型表和代码调用点，没有“未知长期数据写入”。
+- [ ] 轻量契约与架构文档 §5、§12 一致，并由用户确认。
+- [ ] 删除动作仍未执行；Phase 1 才能开始代码迁移。
 
 ## 执行证据
 
-- 已完成的前置验证：本机 Codex App Server initialize/thread list 成功，未调用模型。
-- 2026-07-22：新增隔离模块 `proxy-traffic-monitor/app/ai_workbench/`，包含能力探测、统一事件契约、JSONL parser、只读 CC Switch schema probe、fake CLI process supervisor。
-- 2026-07-22：新增最小脱敏 fixture 和 golden event types，覆盖 user、assistant、tool started/completed、file.changed、usage、error、unknown 和 invalid JSON tail。
-- 2026-07-22：`codex app-server generate-json-schema --out <temp>` 成功；schema 包含 `thread/list` 和 `thread/read`。
-- 2026-07-22：通过 `codex.cmd app-server --stdio` 完成 `initialize → initialized → thread/list(limit=1) → thread/read(includeTurns=false)`；返回 `turns_count=0`，未调用 `thread/start` 或 `turn/start`，未产生模型请求。
-- 2026-07-22：只读检查 CC Switch 当前源码 `schema.rs` 的统计相关表，并保存 schema capability fixture；未升级或写入本机 CC Switch。
-- 2026-07-22：验证命令 `python -m pytest tests\ai_workbench\phase0 -q`，结果 `13 passed`。
-- 2026-07-22：验证命令 `python -m pytest -q`，结果 `17 passed`。
-- 已知限制：Phase 0 的 process supervisor 只是原型，未实现 Windows Job Object 内核级进程树管理；正式运行、取消、审批和 orphan cleanup 进入 Phase 3。
+待实施后填写命令、结果、审计摘要和用户确认；不得把敏感原文粘入本文件。

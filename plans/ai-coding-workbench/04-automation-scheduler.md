@@ -1,138 +1,80 @@
-# Phase 4：多步骤自动任务与可靠调度
+# Phase 4：自动任务与可靠调度
 
-> 状态：待审查  
-> 依赖：Phase 3 已完成并稳定  
-> 允许真实模型请求：每个自动任务由用户显式创建并确认预算  
-> 允许修改第三方数据：仅通过对应 CLI 在所选工作目录正常执行  
-> 验证映射：`docs/verification-and-boundaries.md` §3.6 SEC-05（自动任务权限模板，当前空白）
+> 状态：待审查
+> 更新时间：2026-08-01-23-30-00
+> 依赖：Phase 3 的安全 dispatch、最小 run 审计、取消和原生回合完成语义
+> 不包含：后台持续会话同步、无提示提权、替代 Codex/Claude 自身等待机制、独立运行中心页面。
 
 ## 目标
 
-交付持久化的一次性/Cron 自动任务，能够在指定时间新建或续接会话，按顺序提交多个独立 prompt，实时展示运行、处理审批、支持错过任务策略、重试、取消和应用重启恢复。
+让用户创建可理解、可暂停、可追踪的自动任务：选择时区和时间规则，预先设置一个或多个 prompt，选择 New 或指定 native session Resume，配置顺序等待上一回合完成或固定间隔，以及工具专用的高权限参数。任务结果回到关联会话和任务详情，异常在总览“待处理事项”中出现。
 
-## 非目标
+## 现状证据
 
-- 不实现任意系统命令调度器；任务必须通过 AI 工具 adapter。
-- 不自动跨账号迁移会话。
-- 不默认唤醒已关机设备。
-- 不允许未受限的危险自动批准。
-- 不保证应用服务未运行时由内部 scheduler 自己执行。
+- 当前没有 `automation` 模块或 Phase 4 测试目录；旧计划尚未实施。
+- Phase 3 已有 Coordinator、状态机、原生回合完成、取消和 adapter 基础，但其现有 RunCenter/全事件存储方向必须先按新 Phase 3 方案收窄。
 
-## 交付物
+## 过时项（停止维护 / 删除目标）
 
-- automations、steps、schedules、leases、runs 数据模型。
-- Scheduler Worker 和 misfire/retry/concurrency 策略。
-- 自动任务列表、日历、编辑器和运行历史。
-- 安全权限模板、预算和审批等待。
-- Windows 开机自启/服务方案；可选 Task Scheduler 桥接设计。
+- [ ] 废止将自动任务结果主要投放到“运行中心扩展”的设计；任务应在自动任务页、总览待处理和关联会话中被发现。
+- [ ] 废止把“上一个 prompt 未完成”一律当作失败或自行猜测工具状态；应使用原生回合终态，且允许用户选择固定间隔模式。
+- [ ] 废止 Workbench 自动提升权限或绕过原生审批；高权限只是用户明确选择的工具参数映射。
+- [ ] 废止补跑全部错过任务、静默重叠执行或跨设备复制同一 scheduler 的策略。
 
-## 任务
+## 清理清单（实施时确认）
 
-### P4-01：任务数据模型
+- [ ] 删除/不实现依赖独立 RunCenter 列表、完整事件仓或永久输出副本的自动任务页面、查询与数据模型。
+- [ ] 删除旧 `auto_resume.ps1` 或类似旁路脚本的产品入口；若用户仍要保留个人脚本，明确其不由 Workbench 管理，不读写其状态。
+- [ ] 不建立 Cockpit、CC Switch 或其他外部任务软件的任务导入、同步、唤醒或控制集成。
 
-- [ ] automations、automation_steps、schedule spec、next_run_at。
-- [ ] 保存 tool/profile/project/session action/model/permission/budget 快照。
-- [ ] step 保存 order、prompt、delay、timeout、retry、on_error 和 override。
-- [ ] 版本化任务修改，已开始 run 使用不可变 snapshot。
+## 修改清单（复用并收窄已有能力）
 
-### P4-02：Scheduler Worker
+- [ ] 复用 Phase 3 的 adapter、argv/stdio、安全目录校验、最小 run 审计、取消和 native turn completion；自动任务不得另建第二套执行器。
+- [ ] 将 run 发起来源扩展为 `automation`，使会话诊断、总览和任务详情能关联同一审计记录。
+- [ ] 将等待逻辑定义为调度语义而非模型协议替代：默认等待上一 native turn terminal；可选固定间隔后继续，由用户自行承担可能并发后果并收到明确提示。
 
-- [ ] SQLite 为事实来源，内存 timer 只负责唤醒。
-- [ ] claim lease、heartbeat、lease expiry 和幂等键。
-- [ ] 一次性、Cron、时区、DST 和 next-run 计算。
-- [ ] 任务级、tool/profile/session 级并发限制。
-- [ ] 多 worker 情况下只执行一次。
+## 新增任务
 
-### P4-03：Misfire 和恢复
+### P4-01：任务模型与权限
 
-- [ ] 定义 skip/run-now/ask 三种错过策略。
-- [ ] 服务启动时扫描 overdue schedule。
-- [ ] interrupted run 默认不自动重复发送 prompt，按任务策略处理。
-- [ ] Step 级幂等记录避免重启后重复提交已完成 Turn。
-- [ ] 时钟回拨和时区修改有确定行为。
+- [ ] 定义任务定义：名称、启用状态、IANA 时区、时间规则、工具/profile、工作目录、New/Resume 目标、prompt 序列、序列等待模式、工具专用权限参数、预算/超时、并发和通知设置。
+- [ ] 定义任务运行：计划时间、实际时间、跳过/开始/终态、关联 run、native session ID、当前 prompt 序号、原因和最小脱敏摘要。
+- [ ] 高权限选项必须在任务编辑/确认页显示其确切 adapter 参数、风险、适用工具和是否可用；默认使用原生工具配置，不主动限制用户已经在原生工具中配置的权限。
+- [ ] 任务定义和运行审计不保存 prompt 以外的凭据、环境变量、原始输出或外部工具配置。
 
-### P4-04：多 Step 执行器
+### P4-02：调度、恢复与并发
 
-- [ ] 每个 Step 对应独立原生 Turn。
-- [ ] 上一步完成后才开始下一步。
-- [ ] 支持 delay、timeout、retry/backoff、stop/continue。
-- [ ] 支持暂停后续 Step、只重跑失败 Step。
-- [ ] 保存每步 session id、turn id、usage、输出和错误。
+- [ ] 实现服务内单所有者 scheduler：仅运行 Workbench 服务和原生工具的所有者设备可调度，远程浏览器只是 UI。
+- [ ] 固定 IANA 时区、DST 规则、下一次时间计算、暂停/恢复、手动触发和确认提示。
+- [ ] 定义 misfire：默认记录“已错过”而不补跑；用户若选择补跑必须明确限定次数和时间窗口。
+- [ ] 实现同任务禁止重叠为默认；全局并发限制、排队、取消和服务启动 reconcile 必须可解释。
 
-### P4-05：新建与续接策略
+### P4-03：多 prompt 工作流
 
-- [ ] New：按 profile/project 创建 session，后续 Step 复用新 id。
-- [ ] Resume：运行前重新确认物理 session copy、profile 和 writer lease。
-- [ ] Fork：创建新 id 并记录 lineage。
-- [ ] 会话已移动/分叉/不存在时停止并要求选择，不猜测目标。
+- [ ] 支持单个或多个 prompt，定义每步的 New/Resume 目标和关联会话创建/选择规则。
+- [ ] 默认在上一 native turn 明确完成后派发下一步；失败、取消、超时或来源不可用时停止并标为待处理。
+- [ ] 支持固定间隔模式，明确它可在前一回合仍活动时继续派发；界面要求用户确认并显示风险。
+- [ ] 支持手动重试单步或从指定步骤继续，但不得伪造跨工具 Resume；跨工具操作一律 Handoff。
 
-### P4-06：权限与预算模板
+### P4-04：UI、通知与运维入口
 
-- [ ] 提供 read-only/plan、workspace-write/manual 等安全模板。
-- [ ] 危险 bypass 不作为可见默认模板。
-- [ ] 每任务 max budget、max duration、max turns。
-- [ ] 等待审批不占用无限 worker；支持审批超时。
-- [ ] 保存批准范围和审计记录。
+- [ ] 实现自动任务页：列表、筛选、启停、编辑、运行记录、关联会话、失败原因、手动触发和取消。
+- [ ] 在总览待处理区显示运行中任务、失败任务和待原生审批操作，点击跳至正确详情而非 RunCenter。
+- [ ] 在会话消息流/高级诊断中标示由任务发起的回合和最小运行信息，保持消息正文来源仍为原生文件。
+- [ ] 实现安全通知策略：本地 UI 状态优先；任何外部通知渠道另行审查，不发送 prompt/输出/凭据。
 
-### P4-07：自动任务 UI
+### P4-05：测试与验收
 
-- [ ] 列表/日历、启停、下一次运行和最近结果。
-- [ ] 页面或侧栏编辑，不用大型 modal。
-- [ ] Step 拖动排序、逐步启用、单步测试和 dry-run 摘要。
-- [ ] 显示 profile、项目、session、权限、预算和 misfire。
-- [ ] 删除采用可恢复停用/软删除。
-
-### P4-08：运行中心扩展
-
-- [ ] 展示 scheduled/queued/claimed/running/waiting/missed。
-- [ ] 任务与 run/step 双向跳转。
-- [ ] 支持 cancel current、pause remaining、approve、retry。
-- [ ] 通知错误、错过、等待审批和预算耗尽。
-
-### P4-09：后台运行
-
-- [ ] 首版记录“FastAPI 服务必须运行”的限制。
-- [ ] Windows 开机自启或服务模式，确保单实例 worker。
-- [ ] 设计可选 Windows Task Scheduler 桥接用于启动/唤醒。
-- [ ] 如果支持 Linux，设计 systemd user/service unit。
-- [ ] 安装/卸载后台组件必须可逆并有状态诊断。
-
-### P4-10：原 auto_resume.ps1 迁移
-
-- [ ] 将原脚本作为行为参考，不作为运行时依赖。
-- [ ] 把已有 prompt file、等待和 resume 场景映射到 automation/steps。
-- [ ] 提供迁移说明或一次性导入器，避免自动读取并执行旧脚本。
-- [ ] 标记旧脚本 deprecated 的条件由用户验收后决定。
-
-## 测试矩阵
-
-- 时间：一次性、Cron、DST、时钟回拨、休眠、服务停机后恢复。
-- 并发：同任务重复 claim、同 session 两任务、不同 profile 并发。
-- Step：成功、失败停止、失败继续、retry、取消、审批等待、预算耗尽。
-- 恢复：worker crash、服务重启、Step 已发送但完成事件未持久化。
-- 后台：开机自启、重复启动、卸载、无权限、端口占用。
+- [ ] 新建当前 `tests/ai_workbench/phase4/`，覆盖时区/DST、misfire、并发、恢复、prompt 序列、终态等待、固定间隔、权限映射、取消和失败停止。
+- [ ] 以 fake adapter 完成调度端到端；真实任务仅在用户明确授权工具、账号、prompt、预算和时间窗口后做无害验证。
+- [ ] 验证服务重启不会重复派发未知旧任务，也不会干预用户在其他设备/终端自行发起的会话。
 
 ## 退出标准
 
-- 同一 scheduled occurrence 最多执行一次。
-- 每句 prompt 是独立可审计 Step，不会被拼成一个大 prompt。
-- 同一 session 并发写被可靠阻止。
-- 休眠/停机后的行为符合用户选择的 misfire 策略。
-- 重启不会无提示重复发送已经提交的 prompt。
-- 无人值守任务不会越过未批准权限。
-- UI 能从计划追溯到每个 Step 的实时和历史输出。
-
-## 风险与回滚
-
-- 风险：恢复时重复 prompt。措施：不可变 run snapshot、幂等键、提交前后状态和原生 turn id 对账。
-- 风险：后台服务扩大攻击面。措施：localhost、认证边界、最小权限和可逆安装。
-- 风险：自动批准危险操作。措施：模板白名单、waiting approval、预算/超时。
-- 回滚：停用 scheduler worker 和后台服务，保留任务记录；Phase 3 手动运行继续可用。
-
-## 审查记录
-
-- 暂无。
+- [ ] 任务的时间、时区、权限、序列、等待、并发和失败行为均可在 UI 与审计中解释。
+- [ ] 默认策略不会因错过时间、重启或慢模型产生不可见重复执行。
+- [ ] 自动任务不新增正文/原始事件重型存储，不形成第二个运行中心。
 
 ## 执行证据
 
-- 尚未实施。
+待实施后记录调度测试、时区用例、浏览器验收和任何经用户授权的真实执行范围。
