@@ -24,7 +24,7 @@
 | --- | --- | --- | --- |
 | 0 | [00-technical-foundation.md](00-technical-foundation.md) | 固化新数据边界、迁移前审计与 fixture 基线 | 待审查 |
 | 1 | [01-read-only-session-center.md](01-read-only-session-center.md) | 轻量索引、原生按需读取、三栏会话工作区 | 待审查；后续实现的第一依赖 |
-| 2 | [02-statistics-center.md](02-statistics-center.md) | 原生按需 Token 统计、额度/余额与可选 CC Switch 卡片 | 待审查；依赖 Phase 1 来源读取 |
+| 2 | [02-statistics-center.md](02-statistics-center.md) | 四类用量目标、CC Switch 只读聚合、项目日汇总、额度/余额 | 待审查；依赖 Phase 1 来源读取 |
 | 3 | [03-interactive-runtime.md](03-interactive-runtime.md) | 会话内 New / Resume / Handoff 与最小运行审计 | 待审查；依赖 Phase 1 |
 | 4 | [04-automation-scheduler.md](04-automation-scheduler.md) | 任务定义、调度与会话内结果入口 | 待审查；依赖 Phase 3 |
 | 5 | [05-cross-profile-migration.md](05-cross-profile-migration.md) | 显式迁移、来源副本与分叉处理 | 待审查；依赖 Phase 1、3、4 |
@@ -38,7 +38,7 @@ Phase 0–7 不是自动流水线。每一阶段结束后必须：核对该文�
 - [ ] 不把完整 native transcript、每条 raw event、常驻全文 FTS 或会话副本重新写入 Workbench 数据库。
 - [ ] 不把“运行中心”或“运维”恢复为一级页面；运行入口与诊断按架构分散到会话、总览、任务、用量和设置。
 - [ ] 不读取、展示、调用或写入 Cockpit Tools 的账号、多实例、配额、同步、日志、API 或凭据；移除 Workbench 的 Cockpit 专用目录发现路径。
-- [ ] 不依赖 CC Switch；若存在稳定、非敏感只读契约，仅作为用量统计内的可选独立卡片。
+- [ ] 不依赖 CC Switch；用户启用且版本/schema 兼容时，才以其最小非敏感只读用量聚合作为优先统计来源，并始终提供原生回退。
 - [ ] 不写入 Codex / Claude 原生会话文件，除非已批准的显式迁移任务逐文件列明目标、预检、用户确认与结果报告。
 - [ ] 不把代理流量的网络字节/连接指标与模型 Token、余额或订阅额度混合。
 - [ ] 删除旧重型投影前，向用户展示精确对象、预计释放空间与保留的轻量数据；删除后报告实际释放空间，不保留兼容读取或同等大小备份。
