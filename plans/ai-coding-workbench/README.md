@@ -1,37 +1,41 @@
 # AI 编程工作台分阶段计划
 
 > 状态：架构重基线后待逐阶段审查
-> 更新时间：2026-08-01-22-45-00
-> 架构依据：[架构](../../docs/ai-coding-workbench-architecture.md)、[会话工作区决策](../../docs/conversation-workspace-rethink.md)、[术语](../../CONTEXT.md)
-> 实施规则：只有用户明确批准某一 Phase 后，才可以实现该 Phase；计划更新不构成代码实施授权。
+> 更新时间：2026-08-03-12-13-27
+> 创建时间：2026-07-22-00-03-54
+> 适用范围：AI Coding Workbench 的阶段顺序、依赖、实施授权与计划维护规则
+> 不包含：具体 API、数据库迁移脚本、前端组件实现、真实模型请求或第三方工具写入
+
+> 架构依据：[架构](../../docs/ai-coding-workbench-architecture.md)、[会话工作区决策](../../docs/conversation-workspace-rethink.md)、[术语](../../CONTEXT.md)。只有用户明确批准某一 Phase 后，才可以实现该 Phase；计划更新不构成代码实施授权。
 
 ## 计划目的
 
 本目录把已确认的目标架构拆成可审查、可验收的实施阶段。Workbench 的目标是整合原生 Codex / Claude，而不是再建一份完整 transcript、事件仓或模型服务：原生 JSONL 是正文事实源；Workbench 只保存轻量索引、用户组织数据、自动任务与最小受控运行审计。
 
-旧计划中已经完成的试验、测试和实现记录仍可作为历史证据，但不能被理解为目标架构已完成。每个 Phase 都明确列出：
+2026-08-03 起，会话索引、可读消息流、New / Resume / Handoff 与最小运行审计被合并为同一个“会话工作区”阶段。它们服务于同一日常页面和同一原生会话生命周期，不能再分别交付为“只读会话中心”和“运行中心”。统计因此保持在会话工作区之后，直接复用其原生会话身份、项目归属和按需读取能力。
+
+旧计划中已经完成的试验、测试和实现记录仍可作为历史证据，但不能被理解为目标架构已全部完成。每个 Phase 都明确列出：
 
 - **过时项**：不再实施、后续迁移时删除或停止维护的旧方向；
 - **清理清单**：需要从现有代码、数据模型、路由或前端移除的内容；
 - **修改清单**：可保留但必须改成新边界的能力；
 - **新增任务**：目标架构仍缺失、必须新建的能力。
 
-除已有历史证据外，重基线产生的任务一律从 `[ ]` 开始。完成后须填入同一 Phase 的“执行证据”，并按 [通用验证边界](../../docs/verification-and-boundaries.md) 验证。
+除已验证且与目标架构一致的历史证据外，重基线产生的任务一律从 `[ ]` 开始。完成后须填入同一 Phase 的“执行证据”，并按 [通用验证边界](../../docs/verification-and-boundaries.md) 验证。
 
 ## 推荐实施顺序
 
 | 顺序 | Phase | 目标 | 当前状态 |
 | --- | --- | --- | --- |
-| 0 | [00-technical-foundation.md](00-technical-foundation.md) | 固化新数据边界、迁移前审计与 fixture 基线 | 待审查 |
-| 1 | [01-read-only-session-center.md](01-read-only-session-center.md) | 轻量索引、原生按需读取、三栏会话工作区 | 待审查；后续实现的第一依赖 |
-| 2 | [02-statistics-center.md](02-statistics-center.md) | 四类用量目标、CC Switch 只读聚合、项目日汇总、额度/余额 | 待审查；依赖 Phase 1 来源读取 |
-| 3 | [03-interactive-runtime.md](03-interactive-runtime.md) | 会话内 New / Resume / Handoff 与最小运行审计 | 待审查；依赖 Phase 1 |
-| 4 | [04-automation-scheduler.md](04-automation-scheduler.md) | 任务定义、调度与会话内结果入口 | 待审查；依赖 Phase 3 |
-| 5 | [05-cross-profile-migration.md](05-cross-profile-migration.md) | 显式迁移、来源副本与分叉处理 | 待审查；依赖 Phase 1、3、4 |
-| 6 | [06-traffic-ui-unification.md](06-traffic-ui-unification.md) | 保持 Clash/Mihomo 网络流量辅助视图并接入新导航 | 待审查；可与核心 Phase 并行评审 |
-| 7 | [07-visual-design-implementation.md](07-visual-design-implementation.md) | 以已确认视觉规范统一总览、会话、任务、用量和设置 | 待审查；随各功能 Phase 逐步落地 |
+| 0 | [00-technical-foundation.md](00-technical-foundation.md) | 固化新数据边界、迁移前审计与 fixture 基线 | 已有历史实施证据；需按当前架构复核 |
+| 1 | [01-conversation-workspace.md](01-conversation-workspace.md) | 轻量会话索引、按需原文读取、三栏会话工作区、New / Resume / Handoff 与最小审计 | 待审查；核心前置阶段 |
+| 2 | [02-statistics-center.md](02-statistics-center.md) | 四类用量目标、CC Switch 只读聚合、项目日汇总、额度/余额 | 待审查；依赖 Phase 1 的会话身份与项目归属 |
+| 3 | [03-automation-scheduler.md](03-automation-scheduler.md) | 任务定义、调度与会话内结果入口 | 待审查；依赖 Phase 1 的受控运行 |
+| 4 | [04-cross-profile-migration.md](04-cross-profile-migration.md) | 显式迁移、来源副本与设备交接 | 待审查；依赖 Phase 1；可选复用 Phase 3 任务摘要 |
+| 5 | [05-traffic-ui-unification.md](05-traffic-ui-unification.md) | 保持 Clash/Mihomo 网络流量辅助视图并接入新导航 | 待审查；可与核心 Phase 并行评审 |
+| 6 | [06-visual-design-implementation.md](06-visual-design-implementation.md) | 以已确认视觉规范统一总览、会话、任务、用量和设置 | 待审查；随功能 Phase 渐进实施，不是后置功能依赖 |
 
-Phase 0–7 不是自动流水线。每一阶段结束后必须：核对该文件的退出标准、记录验证证据、更新 `docs/phase-execution-lessons.md`，并请用户确认是否进入下一阶段。
+Phase 0–6 不是自动流水线。每一阶段结束后必须：核对该文件的退出标准、记录验证证据、更新 `docs/phase-execution-lessons.md`，并请用户确认是否进入下一阶段。
 
 ## 全局不可违背的约束
 
@@ -49,3 +53,4 @@ Phase 0–7 不是自动流水线。每一阶段结束后必须：核对该文�
 - 一个已完成的旧任务若与新架构冲突，应移至“过时项/清理清单”，而不是继续打勾作为交付完成。
 - 每个新任务必须写成可验证的 `[ ]` 条目；只有实施、测试和证据同时存在后才改为 `[x]`。
 - 外部工具协议、schema、供应商 API 等易变事实在实施前重新调研；不要用旧计划中的版本号作为当期事实。
+- 阶段重排不会篡改历史报告中的旧编号；历史材料须注明其使用的是重排前编号，当前授权与验收只以本目录和本表为准。
